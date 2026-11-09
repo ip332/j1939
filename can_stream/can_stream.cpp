@@ -2,6 +2,7 @@
 // Created by igor.prilepov on 3/14/22.
 //
 
+#include "actisense_stream.h"
 #include "asc_stream.h"
 #include "log_stream.h"
 #include "out_stream.h"
@@ -93,8 +94,15 @@ size_t CanStream::get_fields() {
 }
 
 std::string SupportedStreams() {
-    return "asc|log|out|trc|txt";
+    return "asc|log|out|trc|txt|raw|all";
 }
+
+namespace {
+bool endsWith(const std::string &s, const char *suffix) {
+    size_t n = strlen(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+} // namespace
 
 std::unique_ptr<CanStream> CanStreamFor(const std::string &input) {
     if (input.find(".asc") != std::string::npos) {
@@ -111,6 +119,11 @@ std::unique_ptr<CanStream> CanStreamFor(const std::string &input) {
     }
     if (input.find(".txt") != std::string::npos) {
         return std::make_unique<TxtStream>();
+    }
+    // canboat's names for actisense-serial output. Matched on the suffix only: unlike the
+    // formats above, ".all"/".raw" are short enough to show up inside unrelated paths.
+    if (endsWith(input, ".raw") || endsWith(input, ".all")) {
+        return std::make_unique<ActisenseStream>();
     }
     return std::make_unique<SocketCanStream>();
 }

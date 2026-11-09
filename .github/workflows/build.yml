@@ -19,15 +19,21 @@ jobs:
             cmake --build /src/build_cov --target coverage"
 
   vcan-tests:
-    runs-on: ubuntu-latest
+    # ubuntu-latest became Ubuntu 26.04 on 2026-10-19; its azure kernel has no
+    # linux-modules-extra-<kernel> package, so vcan can't be installed there.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Build image
         run: docker build -t j1939 .
       - name: Load the vcan kernel module
         run: |
-          sudo apt-get update
-          sudo apt-get install -y "linux-modules-extra-$(uname -r)"
-          sudo modprobe vcan
+          # Use vcan as shipped if the kernel has it; install the extra modules only if not.
+          if ! sudo modprobe vcan 2>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+            sudo modprobe vcan
+          fi
+          lsmod | grep -q '^vcan' || { echo "::error::vcan module could not be loaded"; exit 1; }
       - name: Run SocketCanStream integration tests against vcan0
         run: docker run --rm --cap-add=NET_ADMIN j1939 cmake --build build --target vcan_tests

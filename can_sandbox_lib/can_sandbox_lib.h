@@ -9,6 +9,7 @@
 #include "socket_can_stream.h"
 #include "dbc_parser.h"
 #include "j1939_parser.h"
+#include "node_table.h"
 #include "transport_protocol.h"
 
 // This class defines all supported options and functionalities for reading/writing CAN stream.
@@ -27,14 +28,29 @@ class CanSandbox {
     bool show_unset_bits_ = false;
     // Automatically rewind the input file once EOF has been reached.
     bool rewind_ = false;
+    // Address-claim tracking (NodeTable): print its events, the NAME behind each frame and
+    // the final table.
+    bool nodes_ = false;
+    // Write a JSON summary of the node table (claims, NAMEs, churn, event list) here.
+    std::string nodes_report_;
+    int contest_window_ms_ = 500;
+    int node_timeout_s_ = 0;
+    // Active mode, off by default: send a Request for Address Claimed (from the null
+    // address) on the input CAN interface at startup.
+    bool request_claims_ = false;
 
     std::unique_ptr<CanStream> input_;
     std::unique_ptr<CanStream> output_;
     DbcParser dbc_parser_;
+    std::unique_ptr<NodeTable> node_table_;
+    std::vector<NodeEvent> node_events_; // kept only for -nodes-report
 
     std::function<void(const J1939Parser & parser)> parser_callback_;
 
     void printMessage(const J1939Parser &parser, double time, bool show_unset);
+    void onNodeEvent(const NodeEvent &event);
+    void printNodeTable() const;
+    bool writeNodesReport(const std::string &path, uint64_t frames) const;
 
 public:
     explicit CanSandbox();
@@ -72,6 +88,13 @@ public:
 
     // Start input stream handling.
     void startProcessing();
+
+    // The address-claim table built by startProcessing() (nullptr before it runs).
+    const NodeTable *nodeTable() const { return node_table_.get(); }
+
+    // Active mode: sends a Request for Address Claimed on the input stream. Only possible
+    // when the input is a real CAN interface; returns false (and does nothing) otherwise.
+    bool sendAddressClaimRequest();
 };
 
 
