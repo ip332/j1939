@@ -4,6 +4,8 @@
 
 #include "long_can_message.h"
 
+#include <algorithm>
+
 void LongCanMessage::reset(const J1939_frame &frame) {
     error_ = false;
     // Initialize the data storage.
@@ -36,16 +38,28 @@ void LongCanMessage::reset(const J1939_frame &frame) {
 std::unique_ptr<J1939_frame> LongCanMessage::handleDataFrame(const J1939_frame &frame) {
     std::unique_ptr<J1939_frame> result;
     if (frame.pgn_ == 0xEC00) {
-        reset(frame);
+        if (frame.buffer_[0] == kTpAbort) {
+            abort();
+        } else {
+            reset(frame);
+        }
         return result;
     }
+    if (frame.dst_ != message_.dst_) {
+        // A TP.DT to another destination belongs to a different session (or none): not ours.
+        return result;
+    }
+    const size_t offset = static_cast<size_t>(expected_frame_ - 1) * 7;
+    // Bytes this packet must carry: 7, or whatever is left for the last one. A TP.DT is
+    // normally padded to 8 bytes, but a short one must at least hold the bytes it owes.
+    const size_t needed = expected_size_ > offset ? std::min<size_t>(7, expected_size_ - offset) : 0;
     if (error_ || (frame.buffer_[0] != expected_frame_) ||
-        (frame.src_ != message_.src_) ) {
+        (frame.src_ != message_.src_) || (frame.dlc_ < needed + 1)) {
         error_ = true;
         return result;
     }
     // Copy the payload into the correct location in the data buffer.
-    memcpy(&message_.buffer_[(expected_frame_ - 1) * 7], &frame.buffer_[1], 7);
+    memcpy(&message_.buffer_[offset], &frame.buffer_[1], needed);
     if (expected_frame_ == expected_frames_cnt_) {
         result.reset(new J1939_frame());
         *result = message_;
