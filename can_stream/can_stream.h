@@ -46,6 +46,11 @@ public:
 
     bool realPort() const { return real_port; }
 
+    // True when every get() already returns a complete message (multi-frame transfers were
+    // reassembled before the data was recorded, e.g. by an Actisense gateway), so the frames
+    // must not be fed through TransportProtocol again.
+    virtual bool preassembled() const { return false; }
+
     void setExtended(bool val) { extended_ = val ? 0x80000000 : 0;}
 
     virtual void close() {

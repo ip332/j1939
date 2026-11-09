@@ -114,7 +114,7 @@ void CanSandbox::startProcessing() {
             // of N frames of up to 8 bytes each.
             counter++;
             size += frame.dlc_;
-            if (TransportProtocol::longMessage(frame)) {
+            if (!input_->preassembled() && TransportProtocol::longMessage(frame)) {
                 auto long_message_completed = transportProtocol.handleCanFrame(frame);
                 if (!long_message_completed) {
                     continue;

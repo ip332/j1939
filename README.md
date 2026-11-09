@@ -69,14 +69,19 @@ sudo modprobe vcan
 docker build -t j1939 .
 docker run --rm --cap-add=NET_ADMIN j1939 cmake --build build --target vcan_tests
 ```
+Some tests replay real NMEA 2000 captures from [canboat](https://github.com/canboat/canboat).
+Short excerpts are committed under `testdata/canboat/`, and the tests that use them always run.
+The full captures (~216 MB) are not committed. Fetch them with
+`scripts/fetch_test_logs.sh`; until you do, those tests skip. See
+[testdata/README.md](testdata/README.md).
 #### Using can_sandbox
 
-This tool decodes CAN traffic log files in several text formats (ASC, LOG, TRC, OUT, and ROS) and prints the content to the console. A sample log file is provided.
+This tool decodes CAN traffic log files in several text formats (ASC, LOG, TRC, OUT, ROS, and Actisense `.raw`/`.all` as written by canboat's actisense-serial) and prints the content to the console. A sample log file is provided.
 ```bash
 VirtualBox:~/src/J1939$ bin/can_sandbox
 Usage: can_sandbox <options>
    where <options> could be:
-    -in <arg>		Defines the input device (can0) or a log file (log|trc|txt|asc|out) to read the data from.
+    -in <arg>		Defines the input device (can0) or a log file (asc|log|out|trc|txt|raw|all) to read the data from.
     -out <arg>		Defines the CAN interface to play back the log file into or a file name to record the stream into (.log)
     -dbc <arg>		Defines a DBC file which should be used to parse CAN frames.
     -ext		Treat input messages as extended CAN frames (by default the extended bit from the CAN ID is used)

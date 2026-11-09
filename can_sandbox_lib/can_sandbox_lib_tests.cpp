@@ -181,6 +181,35 @@ TEST(CanSandboxTest, ReassemblesMultiFrameTransfer) {
     EXPECT_EQ(memcmp(&received[0].buffer_[7], "193", 3), 0);
 }
 
+TEST(CanSandboxTest, PassesPreassembledMessagesThroughWithoutReassembly) {
+    // A gateway log (e.g. ActisenseStream) already carries complete fast-packet messages.
+    // 130824 is a fast-packet PGN; this 2-byte message's first byte (0x7d) would read as a
+    // continuation frame and be dropped if it went through TransportProtocol again.
+    auto input = std::make_unique<MockCanStream>();
+    input->setPreassembled(true);
+    J1939_frame message;
+    message.reset();
+    message.pgn_ = 130824;
+    message.dst_ = 0xFF;
+    message.src_ = 38;
+    message.pri_ = 3;
+    message.dlc_ = 2;
+    message.buffer_[0] = 0x7d;
+    message.buffer_[1] = 0x99;
+    input->enqueueFrame(message);
+
+    CanSandbox sandbox;
+    sandbox.setInputStream(std::move(input));
+    std::vector<J1939_frame> received;
+    sandbox.setParserCallback([&](const J1939Parser &parser) {
+        received.push_back(parser.frame());
+    });
+    sandbox.startProcessing();
+
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_TRUE(received[0] == message);
+}
+
 TEST(CanSandboxTest, ReconnectsRealPortOutputUsingCorrectStreamName) {
     auto input = std::make_unique<MockCanStream>();
     const uint8_t data[8] = {1, 2, 3, 4, 5, 6, 7, 8};
