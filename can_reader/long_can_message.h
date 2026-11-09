@@ -24,7 +24,14 @@ class LongCanMessage : public LongCanMessageIf {
 
     void reset(const J1939_frame &frame) override;
 public:
+    // A TP.CM (BAM/RTS) starts the session; TP.DT frames from the same source to the same
+    // destination fill it in. Returns the message once its last packet arrived.
     std::unique_ptr<J1939_frame> handleDataFrame(const J1939_frame &frame) override;
+
+    // Connection Abort: the transfer in progress will never complete.
+    void abort() { error_ = true; }
+    // PGN of the message being transferred (from the TP.CM).
+    uint32_t pgn() const { return message_.pgn_; }
 };
 
 
