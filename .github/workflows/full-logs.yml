@@ -1,0 +1,130 @@
+name: Full logs
+
+# Replays the full canboat NMEA 2000 captures (~216 MB, fetched at the commit pinned in
+# scripts/fetch_test_logs.sh) through the full-log tests and the address-claim table.
+# Not part of PR CI (build.yml runs the committed excerpts only) and not meant to be a required
+# check: a scheduled/manual failure opens or updates an issue instead of blocking merges.
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: full-logs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-logs:
+    # On PRs, only when labelled "full-logs".
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-logs')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned canboat commit
+        id: pin
+        run: |
+          sha=$(sed -n 's/^CANBOAT_SHA="\([0-9a-f]\{40\}\)".*/\1/p' scripts/fetch_test_logs.sh)
+          if [ -z "$sha" ]; then
+            echo "::error::could not read CANBOAT_SHA from scripts/fetch_test_logs.sh"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached captures
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: testdata/external/canboat
+          key: canboat-samples-${{ steps.pin.outputs.sha }}
+
+      - name: Fetch canboat samples
+        id: fetch
+        run: |
+          set +e
+          scripts/fetch_test_logs.sh
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::error title=fetch failed::scripts/fetch_test_logs.sh exited with $status (2 = network/remote); no tests were run"
+            exit "$status"
+          fi
+
+      - name: Save captures to cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: testdata/external/canboat
+          key: canboat-samples-${{ steps.pin.outputs.sha }}
+
+      - name: Build image
+        id: build
+        run: docker build -t j1939 .
+
+      - name: Run full-log tests
+        id: tests
+        # J1939_FULL_LOGS_REQUIRED=1: a capture that is missing despite the fetch fails the run
+        # instead of skipping, so this job can't go green having tested nothing.
+        run: |
+          docker run --rm \
+            -v "$PWD/testdata/external:/src/testdata/external:ro" \
+            -e J1939_FULL_LOGS_REQUIRED=1 \
+            j1939 build/bin/all_tests --gtest_filter='Canboat*:NodeTableReplay*'
+
+      - name: Build replay reports
+        id: reports
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          mkdir -p reports
+          for f in live.all ap48-tack.all nac3-reset-dockside-commissioning.raw \
+                   navico-source-selection.raw dirona-actisense-serial.raw \
+                   merrimac-actisense-serial-2011.raw; do
+            docker run --rm \
+              -v "$PWD/testdata/external:/src/testdata/external:ro" \
+              -v "$PWD/reports:/reports" \
+              j1939 build/bin/can_sandbox -in "testdata/external/canboat/samples/$f" -quiet \
+                -nodes-report "/reports/$f.json" > /dev/null
+          done
+          python3 scripts/summarize_nodes_reports.py reports/*.json | tee reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload replay reports
+        if: always() && steps.reports.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-reports
+          path: reports/
+          if-no-files-found: warn
+
+      - name: Open or update the failure issue
+        if: failure() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FETCH: ${{ steps.fetch.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$FETCH" = "failure" ]; then
+            what="fetch failed: the canboat captures could not be downloaded, so no tests ran"
+          elif [ "$TESTS" = "failure" ]; then
+            what="full-log tests failed"
+          else
+            what="the job failed before or after the tests (see the run)"
+          fi
+          body="$what
+
+          Run: $RUN_URL
+          Commit: $GITHUB_SHA"
+          gh label create full-logs-failure --color B60205 \
+            --description "Nightly full-log replay failed" --force
+          issue=$(gh issue list --label full-logs-failure --state open --json number --jq '.[0].number')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "Full-log replay failing" --label full-logs-failure --body "$body"
+          fi

@@ -9,7 +9,15 @@
 #
 # Usage: scripts/fetch_test_logs.sh [destination]   (default: testdata/external/canboat)
 #
+# Exit status: 0 = samples ready, 1 = bad destination, 2 = fetch failed (network / remote),
+# so CI can tell a broken download from a test failure.
+#
 set -euo pipefail
+
+fetch_failed() {
+    echo "fetch failed: could not download canboat $CANBOAT_SHA from $CANBOAT_URL" >&2
+    exit 2
+}
 
 CANBOAT_URL="https://github.com/canboat/canboat.git"
 CANBOAT_SHA="ee93a6b9dc2aa6e939e4e95bc925e4841dad98e7"   # master, 2026-11-09
@@ -39,7 +47,8 @@ if [ "$(git -C "$DEST" rev-parse -q --verify HEAD 2>/dev/null || true)" = "$CANB
 fi
 
 # Shallow, blob-less fetch of exactly the pinned commit (GitHub allows fetching by SHA), so
-# neither history nor files outside samples/ are downloaded.
-git -C "$DEST" fetch -q --depth 1 --filter=blob:none origin "$CANBOAT_SHA"
-git -C "$DEST" checkout -q --detach "$CANBOAT_SHA"
+# neither history nor files outside samples/ are downloaded. With --filter=blob:none the
+# checkout downloads the file contents, so it can fail on the network too.
+git -C "$DEST" fetch -q --depth 1 --filter=blob:none origin "$CANBOAT_SHA" || fetch_failed
+git -C "$DEST" checkout -q --detach "$CANBOAT_SHA" || fetch_failed
 echo "canboat samples at $CANBOAT_SHA in $DEST/samples"
