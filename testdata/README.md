@@ -37,14 +37,19 @@ The script fetches exactly the pinned commit and checks out only `samples/` and 
 Running it again does nothing if that commit is already checked out. The `CanboatFullLog*`
 tests replay six of the captures, about 1.8 M messages in total. They compare the results
 with message, claim and timestamp counts that a separate Python reader produced from the
-same files. When the files aren't there, the tests skip and print the fetch command. Set
-`CANBOAT_SAMPLES_DIR` to use a checkout somewhere else.
+same files. The `NodeTableReplayTest.*FullCapture` tests replay captures through the node
+table. When the files aren't there, the tests skip and print the file name and the fetch
+command. Set `CANBOAT_SAMPLES_DIR` to use a checkout somewhere else.
+
+Set `J1939_FULL_LOGS_REQUIRED=1` to make a missing file a test failure instead of a skip. The
+full-log CI job sets it, so a broken fetch can't pass having tested nothing.
 
 `testdata/external` is also excluded from the Docker build context. To run the full-log
 tests in the container, mount the samples into it:
 
 ```bash
-docker run --rm -v "$PWD/testdata/external:/src/testdata/external:ro" j1939 build/bin/all_tests --gtest_filter='Canboat*'
+docker run --rm -v "$PWD/testdata/external:/src/testdata/external:ro" -e J1939_FULL_LOGS_REQUIRED=1 \
+    j1939 build/bin/all_tests --gtest_filter='Canboat*:NodeTableReplay*'
 ```
 
 If you bump the pinned commit, recompute the expected numbers in the tests at the same time.

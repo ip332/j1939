@@ -8,10 +8,12 @@
 //
 //  - CanboatExcerptTest: small excerpts committed under testdata/canboat/, always run.
 //  - CanboatFullLogTest: the full captures, fetched by scripts/fetch_test_logs.sh into
-//    testdata/external/canboat/ (or $CANBOAT_SAMPLES_DIR); skipped when absent.
+//    testdata/external/canboat/ (or $CANBOAT_SAMPLES_DIR); skipped when absent, or a
+//    failure when J1939_FULL_LOGS_REQUIRED=1 (see external_samples.h).
 //
 
 #include "actisense_stream.h"
+#include "external_samples.h"
 
 #include <cctype>
 #include <cstdio>
@@ -35,15 +37,6 @@ struct Replay {
     std::vector<Claim> claims;
     std::vector<J1939_frame> first_of_pgn_129029; // at most one, to inspect a long message
 };
-
-bool fileExists(const std::string &path) {
-    FILE *f = fopen(path.c_str(), "r");
-    if (f == nullptr) {
-        return false;
-    }
-    fclose(f);
-    return true;
-}
 
 Replay replay(const std::string &path) {
     Replay r;
@@ -192,14 +185,6 @@ TEST(CanboatExcerptTest, DironaPlainFormat) {
 
 namespace {
 
-std::string externalSamplesDir() {
-    const char *env = getenv("CANBOAT_SAMPLES_DIR");
-    if (env != nullptr && *env != 0) {
-        return std::string(env) + "/";
-    }
-    return std::string(TESTDATA_FOLDER) + "external/canboat/samples/";
-}
-
 struct FullLog {
     const char *file;
     size_t messages;
@@ -224,16 +209,12 @@ const FullLog kFullLogs[] = {
 
 class CanboatFullLogTest : public testing::TestWithParam<FullLog> {};
 
-const char *const kFetchHint = " -- run scripts/fetch_test_logs.sh (or set CANBOAT_SAMPLES_DIR)";
-
 } // namespace
 
 TEST_P(CanboatFullLogTest, MatchesIndependentCounts) {
     const FullLog &log = GetParam();
     std::string path = externalSamplesDir() + log.file;
-    if (!fileExists(path)) {
-        GTEST_SKIP() << "canboat sample " << path << " not found" << kFetchHint;
-    }
+    REQUIRE_EXTERNAL_SAMPLE(path);
     Replay r = replay(path);
     EXPECT_EQ(r.messages, log.messages);
     EXPECT_EQ(r.claims.size(), log.claims);
@@ -256,9 +237,8 @@ INSTANTIATE_TEST_SUITE_P(Canboat, CanboatFullLogTest, testing::ValuesIn(kFullLog
 TEST(CanboatFullLogWalkTest, LiveAllWalkerAndNavicoWalker) {
     std::string live = externalSamplesDir() + "live.all";
     std::string navico = externalSamplesDir() + "navico-source-selection.raw";
-    if (!fileExists(live) || !fileExists(navico)) {
-        GTEST_SKIP() << "canboat samples not found in " << externalSamplesDir() << kFetchHint;
-    }
+    REQUIRE_EXTERNAL_SAMPLE(live);
+    REQUIRE_EXTERNAL_SAMPLE(navico);
     EXPECT_EQ(saWalk(replay(live), kWalker), (std::vector<int>{17, 18, 19, 20, 21, 22, 23}));
     EXPECT_EQ(saWalk(replay(navico), 0xc0509bff2270dbfbULL),
               (std::vector<int>{3, 4, 5, 7, 8, 11, 15, 17}));

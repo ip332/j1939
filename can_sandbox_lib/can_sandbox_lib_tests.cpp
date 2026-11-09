@@ -5,6 +5,7 @@
 // a real-port output reconnect used the wrong stream's name.
 //
 
+#include "actisense_stream.h"
 #include "can_sandbox_lib.h"
 #include "mock_can_stream.h"
 
@@ -277,4 +278,149 @@ TEST(CanSandboxTest, ReconnectsRealPortOutputAfterAPutFailure) {
     EXPECT_TRUE(output_ptr->written().empty()); // put() always failed
     ASSERT_FALSE(output_ptr->openCalls().empty());
     EXPECT_EQ(output_ptr->openCalls().back(), "mock-output");
+}
+
+// --- address-claim tracking (-nodes, -nodes-report, -request-claims) ---
+
+namespace {
+// Actisense lines: unresolved traffic on SA 10, kLow claims it, kHigh contests and loses
+// (kLow defends), kHigh settles on 11.
+const char *kClaimLog =
+    "2026-01-01T00:00:00.000Z,3,61444,10,255,8,01,02,03,04,05,06,07,08\n"
+    "2026-01-01T00:00:00.010Z,6,60928,10,255,8,01,00,00,00,00,8c,50,c0\n"
+    "2026-01-01T00:00:00.020Z,3,61444,10,255,8,01,02,03,04,05,06,07,08\n"
+    "2026-01-01T00:00:00.100Z,6,60928,10,255,8,03,00,00,00,00,8c,50,c0\n"
+    "2026-01-01T00:00:00.110Z,3,61444,10,255,8,01,02,03,04,05,06,07,08\n"
+    "2026-01-01T00:00:00.120Z,6,60928,10,255,8,01,00,00,00,00,8c,50,c0\n"
+    "2026-01-01T00:00:00.200Z,6,60928,11,255,8,03,00,00,00,00,8c,50,c0\n";
+
+std::string readFile(const std::string &path) {
+    std::string content;
+    FILE *f = fopen(path.c_str(), "r");
+    if (f == nullptr) {
+        return content;
+    }
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        content.append(buf, n);
+    }
+    fclose(f);
+    return content;
+}
+} // namespace
+
+TEST_F(CanSandboxParseOptionsTest, NodesPrintsEventsResolutionsAndTheTable) {
+    std::string path = writeTemp(kClaimLog, ".raw");
+    CanSandbox sandbox;
+    const char *argv[] = {"prog", "-in", path.c_str(), "-nodes"};
+    ASSERT_TRUE(sandbox.parseOptions(4, argv));
+    testing::internal::CaptureStdout();
+    sandbox.startProcessing();
+    std::string out = testing::internal::GetCapturedStdout();
+    EXPECT_NE(out.find("UNRESOLVED"), std::string::npos);
+    EXPECT_NE(out.find(" NAME:0xc0508c0000000001"), std::string::npos);
+    EXPECT_NE(out.find(" CONTESTED:0xc0508c0000000001|0xc0508c0000000003"), std::string::npos);
+    EXPECT_NE(out.find("NODE NodeAppeared sa=10 name=0xc0508c0000000001"), std::string::npos);
+    EXPECT_NE(out.find("NODE ContestResolved sa=10 name=0xc0508c0000000001 other=0xc0508c0000000003 "
+                       "branch=HolderDefended"),
+              std::string::npos);
+    EXPECT_NE(out.find("NODE Attributed sa=10"), std::string::npos);
+    EXPECT_NE(out.find("Address-claim table:"), std::string::npos);
+    EXPECT_NE(out.find("SA 11   Active"), std::string::npos);
+
+    const NodeTable *table = sandbox.nodeTable();
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->bySa(10)->name_, 0xc0508c0000000001ULL);
+    EXPECT_EQ(table->bySa(11)->name_, 0xc0508c0000000003ULL);
+    EXPECT_EQ(table->stats().resolved[static_cast<int>(Branch::HolderDefended)], 1u);
+}
+
+TEST_F(CanSandboxParseOptionsTest, NodesPrintsACommandedMove) {
+    // Actisense logs carry Commanded Address already reassembled (9 bytes).
+    std::string path = writeTemp(
+        "2026-01-01T00:00:00.000Z,6,60928,10,255,8,01,00,00,00,00,8c,50,c0\n"
+        "2026-01-01T00:00:00.100Z,6,65240,39,255,9,01,00,00,00,00,8c,50,c0,2a\n"
+        "2026-01-01T00:00:00.200Z,6,60928,42,255,8,01,00,00,00,00,8c,50,c0\n",
+        ".raw");
+    CanSandbox sandbox;
+    const char *argv[] = {"prog", "-in", path.c_str(), "-quiet", "-nodes"};
+    ASSERT_TRUE(sandbox.parseOptions(5, argv));
+    testing::internal::CaptureStdout();
+    sandbox.startProcessing();
+    std::string out = testing::internal::GetCapturedStdout();
+    EXPECT_NE(out.find("NODE CommandedAddress sa=42 old_sa=10 source_sa=39 name=0xc0508c0000000001"),
+              std::string::npos) << out;
+    EXPECT_NE(out.find("NODE NodeAddressChanged sa=42 old_sa=10 name=0xc0508c0000000001 commanded"),
+              std::string::npos) << out;
+}
+
+TEST_F(CanSandboxParseOptionsTest, NodesReportWritesJson) {
+    std::string log = writeTemp(kClaimLog, ".raw");
+    std::string report = writeTemp("", ".json");
+    CanSandbox sandbox;
+    const char *argv[] = {"prog", "-in", log.c_str(), "-quiet", "-nodes-report", report.c_str(),
+                          "-contest-window", "250", "-node-timeout", "60"};
+    ASSERT_TRUE(sandbox.parseOptions(10, argv));
+    // A name that needs JSON escaping.
+    auto input = std::make_unique<ActisenseStream>();
+    ASSERT_TRUE(input->open(log));
+    sandbox.setInputStream(std::move(input), "we\"ird\\name\x01");
+    testing::internal::CaptureStdout();
+    sandbox.startProcessing();
+    std::string out = testing::internal::GetCapturedStdout();
+    EXPECT_EQ(out.find("NODE "), std::string::npos); // -nodes not given: no event lines
+
+    std::string json = readFile(report);
+    EXPECT_NE(json.find("\"input\": \"we\\\"ird\\\\name\\u0001\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"frames\": 7"), std::string::npos);
+    EXPECT_NE(json.find("\"names\": 2"), std::string::npos);
+    EXPECT_NE(json.find("\"claims\": 4"), std::string::npos);
+    EXPECT_NE(json.find("\"contests\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"address_changes\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"HolderDefended\": 1"), std::string::npos);
+    EXPECT_NE(json.find("{\"name\": \"0xc0508c0000000003\", \"sa\": 11, \"state\": \"Active\""),
+              std::string::npos);
+    EXPECT_NE(json.find("\"type\": \"ContestResolved\""), std::string::npos);
+    EXPECT_NE(json.find("\"branch\": \"HolderDefended\""), std::string::npos);
+    EXPECT_EQ(sandbox.nodeTable()->config().contest_window_ns, 250000000ULL);
+    EXPECT_EQ(sandbox.nodeTable()->config().stale_timeout_ns, 60000000000ULL);
+}
+
+TEST_F(CanSandboxParseOptionsTest, NodesReportToAnUnwritablePathDoesNotStopProcessing) {
+    std::string log = writeTemp(kClaimLog, ".raw");
+    CanSandbox sandbox;
+    const char *argv[] = {"prog", "-in", log.c_str(), "-quiet", "-nodes-report",
+                          "/nonexistent/dir/report.json"};
+    ASSERT_TRUE(sandbox.parseOptions(6, argv));
+    testing::internal::CaptureStdout();
+    sandbox.startProcessing();
+    testing::internal::GetCapturedStdout();
+    EXPECT_EQ(sandbox.nodeTable()->stats().claims, 4u);
+}
+
+TEST_F(CanSandboxParseOptionsTest, RequestClaimsIsIgnoredForAFileInput) {
+    std::string log = writeTemp(kClaimLog, ".raw");
+    CanSandbox sandbox;
+    const char *argv[] = {"prog", "-in", log.c_str(), "-quiet", "-request-claims"};
+    ASSERT_TRUE(sandbox.parseOptions(5, argv));
+    testing::internal::CaptureStdout();
+    sandbox.startProcessing(); // warns, then processes the file normally
+    testing::internal::GetCapturedStdout();
+    EXPECT_EQ(sandbox.nodeTable()->stats().claims, 4u);
+    EXPECT_FALSE(sandbox.sendAddressClaimRequest());
+}
+
+TEST(CanSandboxTest, AddressClaimRequestGoesOutOnARealPortInput) {
+    auto input = std::make_unique<MockCanStream>();
+    input->setRealPort(true);
+    MockCanStream *input_ptr = input.get();
+    CanSandbox sandbox;
+    EXPECT_FALSE(sandbox.sendAddressClaimRequest()); // no input yet
+    sandbox.setInputStream(std::move(input), "can0");
+    ASSERT_TRUE(sandbox.sendAddressClaimRequest());
+    ASSERT_EQ(input_ptr->written().size(), 1u);
+    EXPECT_EQ(input_ptr->written()[0].canID(), CAN_EFF_FLAG | 0x18EAFFFEu);
+    input_ptr->failPut(true);
+    EXPECT_FALSE(sandbox.sendAddressClaimRequest());
 }
