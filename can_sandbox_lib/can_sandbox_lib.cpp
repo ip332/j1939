@@ -114,6 +114,11 @@ void CanSandbox::startProcessing() {
             // of N frames of up to 8 bytes each.
             counter++;
             size += frame.dlc_;
+            // TODO(tp-by-name): TransportProtocol keys TP and fast-packet sessions on the
+            // source address only. When an address changes hands mid-transfer (NodeTable
+            // AddressReassigned / NodeAddressChanged), the half-built message of the old owner
+            // gets the new owner's frames. Key sessions on NAME, or flush the SA's sessions on
+            // those events. See can_reader/transport_protocol_known_issues_tests.cpp.
             if (!input_->preassembled() && TransportProtocol::longMessage(frame)) {
                 auto long_message_completed = transportProtocol.handleCanFrame(frame);
                 if (!long_message_completed) {
