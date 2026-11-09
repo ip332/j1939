@@ -103,13 +103,15 @@ uint8_t NodeTable::lastOwnedSa(const Node &node) const {
 void NodeTable::handleClaim(const J1939_frame &frame) {
     const uint8_t x = frame.src_;
     const uint64_t t = now_ns_;
-    if (frame.dlc_ != 8 || x == kGlobalAddress) {
+    uint64_t name = 0;
+    if (frame.dlc_ != 8 || x == kGlobalAddress ||
+        !J1939Name::rawFromBytes(frame.buffer_, frame.dlc_, &name)) {
         stats_.malformed_claims++;
         return;
     }
     stats_.claims++;
     bool created = false;
-    Node &b = nodeFor(J1939Name::rawFromBytes(frame.buffer_), t, &created);
+    Node &b = nodeFor(name, t, &created);
     b.last_claim_ns_ = b.last_seen_ns_ = b.liveness_ns_ = t;
     if (created) {
         NodeEvent e{NodeEventType::NodeAppeared, t};
@@ -453,12 +455,13 @@ void NodeTable::notePingPong(uint8_t sa, Node &claimer, uint64_t time_ns) {
 // --- commanded address ---
 
 void NodeTable::handleCommandedAddress(const J1939_frame &frame) {
-    if (frame.dlc_ != 9 || frame.buffer_[8] >= kNullAddress) {
+    uint64_t name = 0;
+    if (frame.dlc_ != 9 || frame.buffer_[8] >= kNullAddress ||
+        !J1939Name::rawFromBytes(frame.buffer_, frame.dlc_, &name)) {
         stats_.malformed_commanded++;
         return;
     }
     stats_.commanded++;
-    const uint64_t name = J1939Name::rawFromBytes(frame.buffer_);
     const uint8_t new_sa = frame.buffer_[8];
     // Reuse a free entry, or else the one closest to expiring.
     PendingCommand *slot = &commands_[0];
@@ -556,8 +559,10 @@ void NodeTable::expireStale() {
 // --- lookups ---
 
 Resolution NodeTable::resolve(const J1939_frame &frame) const {
-    if (frame.pgn_ == kPgnAddressClaimed && frame.dlc_ == 8) {
-        return {Resolution::Resolved, J1939Name::rawFromBytes(frame.buffer_), 0};
+    uint64_t name = 0;
+    if (frame.pgn_ == kPgnAddressClaimed && frame.dlc_ == 8 &&
+        J1939Name::rawFromBytes(frame.buffer_, frame.dlc_, &name)) {
+        return {Resolution::Resolved, name, 0};
     }
     if (frame.src_ >= kNullAddress) {
         return {Resolution::Unresolved, 0, 0};

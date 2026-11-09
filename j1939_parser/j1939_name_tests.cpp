@@ -10,7 +10,8 @@
 TEST(J1939NameTest, DecodesRealNmea2000Claim) {
     // From canboat live.all: "60928,17,255,8,30,3d,b8,2f,00,87,78,c0".
     const uint8_t bytes[8] = {0x30, 0x3d, 0xb8, 0x2f, 0x00, 0x87, 0x78, 0xc0};
-    uint64_t raw = J1939Name::rawFromBytes(bytes);
+    uint64_t raw = 0;
+    ASSERT_TRUE(J1939Name::rawFromBytes(bytes, sizeof(bytes), &raw));
     EXPECT_EQ(raw, 0xc07887002fb83d30ULL);
     J1939Name n = J1939Name::fromRaw(raw);
     EXPECT_EQ(n.identity_number_, 0x183d30u);
@@ -57,7 +58,21 @@ TEST(J1939NameTest, ByteRoundTripIsLittleEndian) {
     J1939Name::rawToBytes(0x0102030405060708ULL, bytes);
     const uint8_t expected[8] = {8, 7, 6, 5, 4, 3, 2, 1};
     EXPECT_EQ(memcmp(bytes, expected, 8), 0);
-    EXPECT_EQ(J1939Name::rawFromBytes(bytes), 0x0102030405060708ULL);
+    uint64_t raw = 0;
+    ASSERT_TRUE(J1939Name::rawFromBytes(bytes, sizeof(bytes), &raw));
+    EXPECT_EQ(raw, 0x0102030405060708ULL);
+}
+
+TEST(J1939NameTest, RawFromBytesRejectsShortOrMissingInput) {
+    const uint8_t bytes[9] = {8, 7, 6, 5, 4, 3, 2, 1, 0x42};
+    uint64_t raw = 0x1234;
+    EXPECT_FALSE(J1939Name::rawFromBytes(bytes, 7, &raw));
+    EXPECT_FALSE(J1939Name::rawFromBytes(bytes, 0, &raw));
+    EXPECT_FALSE(J1939Name::rawFromBytes(nullptr, 8, &raw));
+    EXPECT_EQ(raw, 0x1234u); // untouched on failure
+    // Longer input (e.g. Commanded Address: NAME + new SA) reads just the first 8 bytes.
+    ASSERT_TRUE(J1939Name::rawFromBytes(bytes, sizeof(bytes), &raw));
+    EXPECT_EQ(raw, 0x0102030405060708ULL);
 }
 
 TEST(J1939NameTest, ToStringShowsHexAndFields) {

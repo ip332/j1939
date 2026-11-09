@@ -39,8 +39,10 @@ struct J1939Name {
     // Fields are masked to their width.
     uint64_t raw() const;
 
-    // Reads the 8 little-endian NAME bytes starting at `bytes`.
-    static uint64_t rawFromBytes(const uint8_t *bytes);
+    // Reads the 8 little-endian NAME bytes from bytes[0..length) into *raw (bytes past the
+    // 8th, e.g. Commanded Address's new SA, are ignored). Returns false, leaving *raw alone,
+    // if `bytes` is null or holds fewer than 8 bytes.
+    static bool rawFromBytes(const uint8_t *bytes, size_t length, uint64_t *raw);
     static void rawToBytes(uint64_t raw, uint8_t *bytes);
 
     // "0x<16 hex digits> (id=..., mfr=..., ...)" for logs.

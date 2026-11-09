@@ -38,12 +38,16 @@ uint64_t J1939Name::raw() const {
            place(industry_group_, 60, 3) | place(arbitrary_address_capable_ ? 1 : 0, 63, 1);
 }
 
-uint64_t J1939Name::rawFromBytes(const uint8_t *bytes) {
-    uint64_t raw = 0;
-    for (int i = 7; i >= 0; i--) {
-        raw = (raw << 8) | bytes[i];
+bool J1939Name::rawFromBytes(const uint8_t *bytes, size_t length, uint64_t *raw) {
+    if (bytes == nullptr || length < 8) {
+        return false;
     }
-    return raw;
+    uint64_t value = 0;
+    for (int i = 7; i >= 0; i--) {
+        value = (value << 8) | bytes[i];
+    }
+    *raw = value;
+    return true;
 }
 
 void J1939Name::rawToBytes(uint64_t raw, uint8_t *bytes) {
