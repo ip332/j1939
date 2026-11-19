@@ -1,1 +1,2 @@
 define_lib(can_reader)
+target_link_libraries(can_reader j1939_parser)

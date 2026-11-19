@@ -30,6 +30,9 @@ public:
     void failNextOpen() { fail_next_open_ = true; }
     // Makes every put() call fail (simulating a broken/full output).
     void failPut(bool fail = true) { fail_put_ = fail; }
+    // Makes preassembled() report true, like a gateway format (ActisenseStream) whose
+    // frames are already complete messages.
+    void setPreassembled(bool value) { preassembled_ = value; }
 
     // --- Test inspection ---
     const std::vector<J1939_frame> &written() const { return written_; }
@@ -52,6 +55,8 @@ public:
     void rewind() override { rewind_count_++; }
 
     bool dataAvailable() const override { return ready_; }
+
+    bool preassembled() const override { return preassembled_; }
 
     bool put(const J1939_frame &frame) const override {
         if (fail_put_) {
@@ -81,6 +86,7 @@ private:
     std::vector<std::string> open_calls_;
     bool fail_next_open_ = false;
     bool fail_put_ = false;
+    bool preassembled_ = false;
     // Ready by default -- setInputStream()/setOutputStream() deliberately don't call
     // open() on the caller's behalf, so a freshly constructed mock needs to already be
     // usable. Tests that need to start not-ready (e.g. reconnect-logic tests) call

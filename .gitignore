@@ -1,0 +1,2 @@
+# Large third-party sample logs, fetched on demand by scripts/fetch_test_logs.sh.
+testdata/external/

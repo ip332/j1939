@@ -66,6 +66,9 @@ find_package(GTest)
 
 add_definitions(-DDBC_FOLDER="${CMAKE_CURRENT_SOURCE_DIR}/tests/dbc/")
 add_definitions(-DJ1939_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/j1939_parser")
+# Sample CAN logs: committed excerpts in testdata/canboat/, and the full captures that
+# scripts/fetch_test_logs.sh downloads into testdata/external/ (see testdata/README.md).
+add_definitions(-DTESTDATA_FOLDER="${CMAKE_CURRENT_SOURCE_DIR}/testdata/")
 
 # Build test app. Test files are colocated with the code they test rather than all
 # living in tests/, so collect them from each module's own directory.
