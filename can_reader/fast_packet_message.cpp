@@ -21,7 +21,8 @@ static std::set<uint32_t> fast_pgn = {
         130818, 130819, 130820, 130821, 130823, 130824, 130827, 130828, 130831,
         130832, 130834, 130835, 130836, 130837, 130838, 130839, 130840, 130842,
         130845, 130846, 130847, 130850, 130851, 130856, 130880, 130881, 130944,
-        65536,
+        // (canboat's 65536 entry is its fallback for unknown addressed ISO PGNs in
+        // 0x10000-0x1EC00, which travel over TP, not fast packet -- so not listed here.)
         130900,
 };
 
@@ -44,6 +45,7 @@ void FastPacketMessage::reset(const J1939_frame &frame) {
     //            data bytes in the first frame and up to (7) data bytes in
     //            following frames.
     sequence_counter_ = (frame.buffer_[0] >> 5) & 0x7;
+    next_frame_ = 1;
     expected_size_ = frame.buffer_[1];
     message_.dlc_ = expected_size_ < 6 ? expected_size_ : 6;
     memcpy(message_.buffer_, &frame.buffer_[2], message_.dlc_);
@@ -65,11 +67,15 @@ std::unique_ptr<J1939_frame> FastPacketMessage::handleDataFrame(
         return result;
     }
 
+    // Frames must come in order (frame counter 1, 2, ...): a missing or reordered frame would
+    // otherwise shift the payload silently.
     if (error_ || (((frame.buffer_[0] >> 5) & 0x7) != sequence_counter_) ||
+        ((frame.buffer_[0] & 0x1F) != next_frame_) ||
         (frame.src_ != message_.src_) || (frame.pgn_ != message_.pgn_)) {
         error_ = true;
         return result;
     }
+    next_frame_++;
     // Copy the payload into the correct location in the data buffer.
     size_t remaining = expected_size_ - message_.dlc_;
     size_t copy_len = remaining < 7 ? remaining : 7;
