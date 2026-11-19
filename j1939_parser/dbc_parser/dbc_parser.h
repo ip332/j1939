@@ -58,7 +58,8 @@ public:
     // Parses the provided DBC file and stores its content in the raw_messages_ storage
     bool parseFile(const std::string &dbc_path);
 
-    // Removes duplicated messages and updates the raw_messages_ container.
+    // Collapses extended messages that share a PGN and a layout. The generic row is
+    // keyed by j1939PgnKey. A layout that is not generic is keyed by j1939SaKey.
     void removeDuplicates();
 
     void setName(const std::string &name) { name_ = name; }

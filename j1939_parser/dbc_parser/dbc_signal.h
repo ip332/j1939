@@ -115,6 +115,7 @@ public:
         bool result = start_bit_ == other.start_bit_ &&
                       length_ == other.length_ && offset_ == other.offset_ && signed_ == other.signed_ &&
                       scalar_ == other.scalar_ && min_ == other.min_ && max_ == other.max_ &&
+                      little_endian_ == other.little_endian_ &&
                       enum_map_.size() == other.enum_map_.size();
         if (result) {
             // Make sure that both enums have the same values

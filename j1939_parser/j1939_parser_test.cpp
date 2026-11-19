@@ -377,17 +377,53 @@ TEST_F(J1939ParserTest, SetValuesRadarBigEndianTest) {
     EXPECT_EQ(memcmp(expected, frame_.buffer_, frame_.dlc_), 0);
 }
 
-TEST_F(J1939ParserTest, GetPgnFallsBackToPgnKeyLookup) {
-    frame_.reset();
-    frame_.pgn_ = 1234; // matches a TEST_DBC key directly
-    frame_.pri_ = 7;
-    frame_.src_ = 0x55;
-    frame_.dst_ = 0xFF;
-    // canID() bakes in pri_/src_/dst_, so it no longer equals the raw PGN value --
-    // the first (canID()-keyed) lookup must miss for the PGN-keyed fallback to be
-    // what actually finds this entry.
-    ASSERT_NE(frame_.canID(), 1234u);
-    EXPECT_NE(parser_->getPgn(), nullptr);
+TEST(J1939ParserLookupTest, SpecificSourceAddressBeatsGenericRow) {
+    const std::map<uint32_t, PGN> dbc{
+        {j1939PgnKey(0xFE00), {"Generic", 8, {{"G", 0, 8, false, true, 1, 0, 0, 255, {}}}}},
+        {j1939SaKey(0xFE00, 0x11), {"Specific", 8, {{"S", 0, 8, false, true, 1, 0, 0, 255, {}}}}},
+    };
+    J1939_frame frame;
+    frame.reset();
+    // Priority 6, SA 0x11: the source-address row wins over the generic PGN row.
+    ASSERT_TRUE(frame.setFrom(0x98FE0011u));
+    J1939Parser parser(frame, dbc);
+    ASSERT_NE(parser.getPgn(), nullptr);
+    EXPECT_EQ(parser.getPgn()->name_, "Specific");
+
+    // Same SA at priority 0 still hits that row.
+    ASSERT_TRUE(frame.setFrom(0x80FE0011u));
+    EXPECT_EQ(parser.getPgn()->name_, "Specific");
+
+    // Priority 3, SA 0x22 has no row of its own, so the generic PGN row is used.
+    ASSERT_TRUE(frame.setFrom(0x8CFE0022u));
+    ASSERT_NE(parser.getPgn(), nullptr);
+    EXPECT_EQ(parser.getPgn()->name_, "Generic");
+}
+
+TEST(J1939ParserLookupTest, StandardIdIsNotLookedUpAsPgn) {
+    const std::map<uint32_t, PGN> dbc{
+        {0x100u, {"Std", 1, {{"A", 0, 8, false, true, 1, 0, 0, 255, {}}}}},
+        {j1939PgnKey(0), {"TSC1", 8, {{"B", 0, 8, false, true, 1, 0, 0, 255, {}}}}},
+    };
+    J1939_frame frame;
+    frame.reset();
+    // 0x100 slices to PGN 0. Lookup must return the 11-bit message.
+    ASSERT_TRUE(frame.setFrom(0x100u));
+    EXPECT_EQ(frame.pgn_, 0u);
+    J1939Parser parser(frame, dbc);
+    ASSERT_NE(parser.getPgn(), nullptr);
+    EXPECT_EQ(parser.getPgn()->name_, "Std");
+
+    // A frame whose sliced PGN equals the 11-bit id is not that message.
+    ASSERT_TRUE(frame.setFrom(0x00010000u));
+    EXPECT_EQ(frame.pgn_, 0x100u);
+    EXPECT_FALSE(frame.extended_);
+    EXPECT_EQ(parser.getPgn(), nullptr);
+
+    // Extended PGN 0, SA 0x2A, finds TSC1 through the generic key.
+    ASSERT_TRUE(frame.setFrom(0x8000002Au));
+    ASSERT_NE(parser.getPgn(), nullptr);
+    EXPECT_EQ(parser.getPgn()->name_, "TSC1");
 }
 
 TEST_F(J1939ParserTest, ScanAllSignalsSkipsUnsetSignalsByDefault) {
@@ -451,19 +487,19 @@ TEST(J1939ParserPgnForTest, ReturnsEmptySetForUnknownSignal) {
     EXPECT_TRUE(pgns.empty());
 }
 
-TEST_F(J1939ParserTest, ToStringOnExtendedFrameUsesExtendedFormat) {
-    frame_.reset();
-    // Set pgn_ directly rather than via setFrom(): canID() bakes in extended_, so
-    // setting it after setFrom() would change what canID() computes and break the
-    // PGN lookup -- setting pgn_ directly makes the PGN-key fallback find it
-    // regardless of extended_/canID().
-    frame_.pgn_ = 1234;
-    frame_.extended_ = true;
-    frame_.dlc_ = TEST_DBC.at(1234).dlc_;
+TEST(J1939ParserLookupTest, ToStringOnExtendedFrameUsesExtendedFormat) {
+    const std::map<uint32_t, PGN> dbc{
+        {j1939PgnKey(0xFE00), {"StatusMsg", 8, {}}},
+    };
+    J1939_frame frame;
+    frame.reset();
+    // Priority 6 and SA 0x22 are not stored in the generic key.
+    ASSERT_TRUE(frame.setFrom(0x98FE0022u));
+    J1939Parser parser(frame, dbc);
 
     std::stringstream stream;
-    parser_->toString(stream);
-    // The extended-frame branch prints "SA:...DST:...Prio:" instead of "CAN ID:".
+    EXPECT_TRUE(parser.toString(stream));
+    EXPECT_NE(stream.str().find("StatusMsg"), std::string::npos);
     EXPECT_NE(stream.str().find("SA:"), std::string::npos);
     EXPECT_NE(stream.str().find("DST:"), std::string::npos);
 }

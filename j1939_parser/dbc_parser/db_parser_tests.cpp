@@ -194,9 +194,9 @@ TEST_F(DbcParserFileTest, StoreLastMessageIgnoresExactDuplicateCanId) {
     EXPECT_TRUE(parser.getId("SameMessage"));
 }
 
-TEST_F(DbcParserFileTest, RemoveDuplicatesLeavesNoGeneralizedPgnEntryWhenNoMessageHasStandardDlc) {
-    // When none of a PGN group's distinct messages have the "standard" 8-byte DLC, no
-    // generalized copy is stored under the bare PGN key -- only the CAN-ID-keyed copies.
+TEST_F(DbcParserFileTest, RemoveDuplicatesStoresUnmarkedLayoutsBySourceAddress) {
+    // Distinct layouts and no J1939Default mark: one source-address row each.
+    // Neither DLC is 8, and DLC would not have chosen a generic row anyway.
     std::string content =
         "BO_ 2164129809 StatusMsg_11: 4 ECM\n"
         " SG_ Sig1 : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX\n\n"
@@ -208,9 +208,13 @@ TEST_F(DbcParserFileTest, RemoveDuplicatesLeavesNoGeneralizedPgnEntryWhenNoMessa
     ASSERT_TRUE(parser.parseFile(path));
     parser.removeDuplicates();
     parser.generateRunTimeFormat();
-    EXPECT_EQ(parser.dbc().find(65024), parser.dbc().end());
-    EXPECT_NE(parser.dbc().find(2164129792), parser.dbc().end());
-    EXPECT_NE(parser.dbc().find(2164129826), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().size(), 2u);
+    EXPECT_EQ(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    ASSERT_NE(parser.dbc().find(j1939SaKey(0xFE00, 0x11)), parser.dbc().end());
+    ASSERT_NE(parser.dbc().find(j1939SaKey(0xFE00, 0x22)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x11)).name_, "StatusMsg_11");
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x11)).dlc_, 4);
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x22)).dlc_, 2);
 }
 
 TEST_F(DbcParserFileTest, TopLevelParserHandlesValRecordThroughRealParse) {
@@ -341,9 +345,11 @@ TEST_F(DbcParserFileTest, RemoveDuplicatesGeneralizesUniqueMessagePerPgn) {
     ASSERT_TRUE(parser.parseFile(path));
     parser.removeDuplicates();
     parser.generateRunTimeFormat();
-    // Stored under the bare PGN key, generalized (SA-suffix stripped from the name).
-    ASSERT_NE(parser.dbc().find(65024), parser.dbc().end());
-    EXPECT_EQ(parser.dbc().at(65024).name_, "StatusMsg");
+    // One layout: generic PGN key, SA suffix stripped. No source-address row.
+    EXPECT_EQ(parser.dbc().size(), 1u);
+    ASSERT_NE(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939PgnKey(0xFE00)).name_, "StatusMsg");
+    EXPECT_EQ(parser.dbc().find(j1939SaKey(0xFE00, 0x11)), parser.dbc().end());
 }
 
 TEST_F(DbcParserFileTest, RemoveDuplicatesKeepsDistinctMessagesUnderSamePgn) {
@@ -359,14 +365,14 @@ TEST_F(DbcParserFileTest, RemoveDuplicatesKeepsDistinctMessagesUnderSamePgn) {
     ASSERT_TRUE(parser.parseFile(path));
     parser.removeDuplicates();
     parser.generateRunTimeFormat();
-    // Both kept individually: the first message in a new PGN group is stored via its
-    // *generalized* (SA-reset) CAN ID (0x80fe0011 -> 0x80fe0000 = 2164129792), while
-    // later messages added to an existing group keep their real CAN ID as-is.
-    EXPECT_NE(parser.dbc().find(2164129792), parser.dbc().end());
-    EXPECT_NE(parser.dbc().find(2164129826), parser.dbc().end());
-    // ...and the DLC-8 one is also generalized under the bare PGN key.
-    ASSERT_NE(parser.dbc().find(65024), parser.dbc().end());
-    EXPECT_EQ(parser.dbc().at(65024).dlc_, 8);
+    // Both layouts stay under their source address. The DLC-8 message is not a generic row.
+    EXPECT_EQ(parser.dbc().size(), 2u);
+    EXPECT_EQ(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    ASSERT_NE(parser.dbc().find(j1939SaKey(0xFE00, 0x11)), parser.dbc().end());
+    ASSERT_NE(parser.dbc().find(j1939SaKey(0xFE00, 0x22)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x11)).dlc_, 8);
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x22)).dlc_, 4);
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x11)).name_, "StatusMsg_11");
 }
 
 TEST_F(DbcParserFileTest, RemoveDuplicatesDedupsIdenticalMessagesUnderSamePgn) {
@@ -382,9 +388,220 @@ TEST_F(DbcParserFileTest, RemoveDuplicatesDedupsIdenticalMessagesUnderSamePgn) {
     ASSERT_TRUE(parser.parseFile(path));
     parser.removeDuplicates();
     parser.generateRunTimeFormat();
-    // Deduped to a single generalized entry under the bare PGN key.
+    // Deduped to a single generic row. Priority and source address are not in the key.
     EXPECT_EQ(parser.dbc().size(), 1u);
-    ASSERT_NE(parser.dbc().find(65024), parser.dbc().end());
+    ASSERT_NE(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939PgnKey(0xFE00)).name_, "StatusMsg");
+}
+
+// PGN 0xFE00 is PDU2, so the id is the extended flag, the priority, the PGN, and the source address.
+static uint32_t pgnFe00Id(uint32_t priority, uint32_t sa) {
+    return CAN_EFF_FLAG | ((priority & 7u) << 26) | (0xFE00u << 8) | (sa & 0xFFu);
+}
+
+static std::string fe00Message(uint32_t priority, uint32_t sa, const char *name, const char *signal) {
+    return "BO_ " + std::to_string(pgnFe00Id(priority, sa)) + " " + name + ": 8 ECM\n"
+           " SG_ " + std::string(signal) + "\n\n";
+}
+
+TEST_F(DbcParserFileTest, IdenticalLayoutIsFoundForAnyPriorityAndSource) {
+    const char *signal = "Sig1 : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX";
+    std::string content = fe00Message(6, 0x11, "Status_11", signal) +
+                          fe00Message(3, 0x22, "Status_22", signal);
+    std::string path = writeTemp(content);
+    DbcParser parser;
+    parser.setVerbose(false);
+    ASSERT_TRUE(parser.parseFile(path));
+    parser.removeDuplicates();
+    parser.generateRunTimeFormat();
+
+    EXPECT_EQ(parser.dbc().size(), 1u);
+    ASSERT_NE(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939PgnKey(0xFE00)).name_, "Status");
+
+    uint8_t payload[8] = {0x2A, 0, 0, 0, 0, 0, 0, 0};
+    J1939_frame frame;
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(6, 0x11), payload, 8));
+    J1939Parser lookup(frame, parser.dbc());
+    ASSERT_NE(lookup.getPgn(), nullptr);
+    EXPECT_EQ(lookup.getPgn()->name_, "Status");
+    auto raw = lookup.signalRawValue("Sig1");
+    ASSERT_TRUE(raw);
+    EXPECT_EQ(*raw, 0x2Au);
+
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(3, 0x22), payload, 8));
+    EXPECT_EQ(lookup.getPgn()->name_, "Status");
+    raw = lookup.signalRawValue("Sig1");
+    ASSERT_TRUE(raw);
+    EXPECT_EQ(*raw, 0x2Au);
+
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(7, 0x33), payload, 8));
+    EXPECT_EQ(lookup.getPgn()->name_, "Status");
+}
+
+TEST_F(DbcParserFileTest, DistinctLayoutsStayWithTheirSourceAddress) {
+    // Both messages are DLC 8 and the signals differ. A third source address misses.
+    std::string content =
+        fe00Message(6, 0x11, "StatusA", "SigA : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX") +
+        fe00Message(3, 0x22, "StatusB", "SigB : 8|8@1+ (1,0) [0|255] \"\" Vector__XXX");
+    std::string path = writeTemp(content);
+    DbcParser parser;
+    parser.setVerbose(false);
+    ASSERT_TRUE(parser.parseFile(path));
+    parser.removeDuplicates();
+    parser.generateRunTimeFormat();
+
+    EXPECT_EQ(parser.dbc().size(), 2u);
+    EXPECT_EQ(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x11)).name_, "StatusA");
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x22)).name_, "StatusB");
+
+    uint8_t payload[8] = {0x11, 0x22, 0, 0, 0, 0, 0, 0};
+    J1939_frame frame;
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(6, 0x11), payload, 8));
+    J1939Parser lookup(frame, parser.dbc());
+    ASSERT_NE(lookup.getPgn(), nullptr);
+    EXPECT_EQ(lookup.getPgn()->name_, "StatusA");
+    auto raw = lookup.signalRawValue("SigA");
+    ASSERT_TRUE(raw);
+    EXPECT_EQ(*raw, 0x11u);
+    EXPECT_FALSE(lookup.signalRawValue("SigB"));
+
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(3, 0x22), payload, 8));
+    EXPECT_EQ(lookup.getPgn()->name_, "StatusB");
+    raw = lookup.signalRawValue("SigB");
+    ASSERT_TRUE(raw);
+    EXPECT_EQ(*raw, 0x22u);
+    EXPECT_FALSE(lookup.signalRawValue("SigA"));
+
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(1, 0x33), payload, 8));
+    EXPECT_EQ(lookup.getPgn(), nullptr);
+}
+
+TEST_F(DbcParserFileTest, EndiannessAlonePreventsCollapse) {
+    std::string content =
+        fe00Message(6, 0x11, "Little_11", "Sig1 : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX") +
+        fe00Message(0, 0x22, "Big_22", "Sig1 : 0|8@0+ (1,0) [0|255] \"\" Vector__XXX");
+    std::string path = writeTemp(content);
+    DbcParser parser;
+    parser.setVerbose(false);
+    ASSERT_TRUE(parser.parseFile(path));
+    parser.removeDuplicates();
+    parser.generateRunTimeFormat();
+
+    EXPECT_EQ(parser.dbc().size(), 2u);
+    EXPECT_EQ(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    const PGN &little = parser.dbc().at(j1939SaKey(0xFE00, 0x11));
+    const PGN &big = parser.dbc().at(j1939SaKey(0xFE00, 0x22));
+    EXPECT_EQ(little.name_, "Little_11");
+    EXPECT_EQ(big.name_, "Big_22");
+    ASSERT_EQ(little.signals_.size(), 1u);
+    ASSERT_EQ(big.signals_.size(), 1u);
+    EXPECT_TRUE(little.signals_[0].little_endian_);
+    EXPECT_FALSE(big.signals_[0].little_endian_);
+}
+
+TEST_F(DbcParserFileTest, MarkedLayoutIsTheGenericRow) {
+    // The marked message is not first and both DLCs are 8. The generic row follows the mark.
+    std::string content =
+        fe00Message(6, 0x11, "Wide_11", "Sig1 : 0|16@1+ (1,0) [0|65535] \"\" Vector__XXX") +
+        fe00Message(3, 0x22, "Narrow_22", "Sig1 : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX") +
+        "BA_ \"J1939Default\" BO_ " + std::to_string(pgnFe00Id(3, 0x22)) + " 1;\n";
+    std::string path = writeTemp(content);
+    DbcParser parser;
+    parser.setVerbose(false);
+    ASSERT_TRUE(parser.parseFile(path));
+    parser.removeDuplicates();
+    parser.generateRunTimeFormat();
+
+    EXPECT_EQ(parser.dbc().size(), 2u);
+    const PGN &generic = parser.dbc().at(j1939PgnKey(0xFE00));
+    EXPECT_EQ(generic.name_, "Narrow");
+    ASSERT_EQ(generic.signals_.size(), 1u);
+    EXPECT_EQ(generic.signals_[0].length_, 8);
+    EXPECT_EQ(parser.dbc().find(j1939SaKey(0xFE00, 0x22)), parser.dbc().end());
+    const PGN &wide = parser.dbc().at(j1939SaKey(0xFE00, 0x11));
+    EXPECT_EQ(wide.name_, "Wide_11");
+    EXPECT_EQ(wide.signals_[0].length_, 16);
+
+    uint8_t payload[8] = {0x34, 0x12, 0, 0, 0, 0, 0, 0};
+    J1939_frame frame;
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(0, 0x11), payload, 8));
+    J1939Parser lookup(frame, parser.dbc());
+    ASSERT_NE(lookup.getPgn(), nullptr);
+    EXPECT_EQ(lookup.getPgn()->name_, "Wide_11");
+    auto raw = lookup.signalRawValue("Sig1");
+    ASSERT_TRUE(raw);
+    EXPECT_EQ(*raw, 0x1234u);
+
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(6, 0x22), payload, 8));
+    ASSERT_NE(lookup.getPgn(), nullptr);
+    EXPECT_EQ(lookup.getPgn()->name_, "Narrow");
+    raw = lookup.signalRawValue("Sig1");
+    ASSERT_TRUE(raw);
+    EXPECT_EQ(*raw, 0x34u);
+
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(2, 0x44), payload, 8));
+    ASSERT_NE(lookup.getPgn(), nullptr);
+    EXPECT_EQ(lookup.getPgn()->name_, "Narrow");
+}
+
+TEST_F(DbcParserFileTest, DisagreeingDefaultsLeaveNoGenericRow) {
+    std::string content =
+        fe00Message(6, 0x11, "Wide_11", "Sig1 : 0|16@1+ (1,0) [0|65535] \"\" Vector__XXX") +
+        fe00Message(3, 0x22, "Narrow_22", "Sig1 : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX") +
+        "BA_ \"J1939Default\" BO_ " + std::to_string(pgnFe00Id(6, 0x11)) + " 1;\n"
+        "BA_ \"J1939Default\" BO_ " + std::to_string(pgnFe00Id(3, 0x22)) + " 1;\n";
+    std::string path = writeTemp(content);
+    DbcParser parser;
+    parser.setVerbose(false);
+    ASSERT_TRUE(parser.parseFile(path));
+    parser.removeDuplicates();
+    parser.generateRunTimeFormat();
+
+    EXPECT_EQ(parser.dbc().size(), 2u);
+    EXPECT_EQ(parser.dbc().find(j1939PgnKey(0xFE00)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x11)).signals_[0].length_, 16);
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x22)).signals_[0].length_, 8);
+
+    J1939_frame frame;
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(4, 0x33)));
+    J1939Parser lookup(frame, parser.dbc());
+    EXPECT_EQ(lookup.getPgn(), nullptr);
+}
+
+TEST_F(DbcParserFileTest, AgreeingDefaultsShareOneGenericRow) {
+    // Two marks on the same layout, plus a third layout. The marked layout is generic.
+    const char *wide = "Sig1 : 0|16@1+ (1,0) [0|65535] \"\" Vector__XXX";
+    std::string content =
+        fe00Message(1, 0x33, "Narrow_33", "Sig1 : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX") +
+        fe00Message(6, 0x11, "Wide_11", wide) +
+        fe00Message(3, 0x22, "Wide_22", wide) +
+        "BA_ \"J1939Default\" BO_ " + std::to_string(pgnFe00Id(6, 0x11)) + " 1;\n"
+        "BA_ \"J1939Default\" BO_ " + std::to_string(pgnFe00Id(3, 0x22)) + " 1;\n";
+    std::string path = writeTemp(content);
+    DbcParser parser;
+    parser.setVerbose(false);
+    ASSERT_TRUE(parser.parseFile(path));
+    parser.removeDuplicates();
+    parser.generateRunTimeFormat();
+
+    EXPECT_EQ(parser.dbc().size(), 2u);
+    EXPECT_EQ(parser.dbc().at(j1939PgnKey(0xFE00)).name_, "Wide");
+    EXPECT_EQ(parser.dbc().at(j1939PgnKey(0xFE00)).signals_[0].length_, 16);
+    EXPECT_EQ(parser.dbc().find(j1939SaKey(0xFE00, 0x11)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().find(j1939SaKey(0xFE00, 0x22)), parser.dbc().end());
+    EXPECT_EQ(parser.dbc().at(j1939SaKey(0xFE00, 0x33)).name_, "Narrow_33");
+
+    uint8_t payload[8] = {0x34, 0x12, 0, 0, 0, 0, 0, 0};
+    J1939_frame frame;
+    ASSERT_TRUE(frame.setFrom(pgnFe00Id(7, 0x44), payload, 8));
+    J1939Parser lookup(frame, parser.dbc());
+    ASSERT_NE(lookup.getPgn(), nullptr);
+    EXPECT_EQ(lookup.getPgn()->name_, "Wide");
+    auto raw = lookup.signalRawValue("Sig1");
+    ASSERT_TRUE(raw);
+    EXPECT_EQ(*raw, 0x1234u);
 }
 
 // --- Message-level tests ---
@@ -522,6 +739,7 @@ TEST(SignalTest, EqualityDetectsEachFieldMismatchIndividually) {
     EXPECT_FALSE(base == Signal(" SG_ Name : 0|8@1+ (2,0) [0|255] \"\" Vector__XXX\n"));  // scalar_
     EXPECT_FALSE(base == Signal(" SG_ Name : 0|8@1+ (1,0) [5|255] \"\" Vector__XXX\n"));  // min_
     EXPECT_FALSE(base == Signal(" SG_ Name : 0|8@1+ (1,0) [0|100] \"\" Vector__XXX\n"));  // max_
+    EXPECT_FALSE(base == Signal(" SG_ Name : 0|8@0+ (1,0) [0|255] \"\" Vector__XXX\n"));  // little_endian_
 }
 
 TEST(SignalTest, AddValueSkipsExactDuplicateEntry) {

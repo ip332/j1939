@@ -92,7 +92,10 @@ void DbcParser::storeLastMessage() {
     }
 }
 void DbcParser::removeDuplicates() {
-    // Group messages by their PGN.
+    // Extended identity is the PGN, plus the source address only when that PGN has
+    // more than one layout. Priority is ignored. One layout becomes the generic row.
+    // Several layouts stay source-address specific, and a generic row is added only
+    // when the BA_ "J1939Default" messages share a single layout. DLC does not choose it.
     std::map<uint32_t, std::vector<Message>> pgn_groups;
     for (const auto & id : extended_ids_) {
         auto msg = raw_messages_.find(id);
@@ -101,50 +104,62 @@ void DbcParser::removeDuplicates() {
             raw_messages_.erase(msg);
             continue;
         }
-        uint32_t pgn = msg->second.pgn();
-        auto it = pgn_groups.find(pgn);
-        if (it == pgn_groups.end()) {
-            // Add new item.
-            std::vector<Message> group;
-            group.push_back(msg->second.generalized());
-            pgn_groups.emplace(pgn, group);
-        } else {
-            // Compare the new message against all previously stored under the same PGN.
-            bool found = false;
-            for (const auto & other: it->second) {
-                if (other == msg->second) {
-                    found = true;
+        pgn_groups[msg->second.pgn()].push_back(msg->second);
+        raw_messages_.erase(msg);
+    }
+    for (const auto & group : pgn_groups) {
+        std::vector<std::vector<Message>> clusters;
+        for (const Message &message : group.second) {
+            bool placed = false;
+            for (auto &cluster : clusters) {
+                if (cluster.front() == message) {
+                    cluster.push_back(message);
+                    placed = true;
                     break;
                 }
             }
-            if (!found) {
-                // Add message only it was different from any already accumulated ones.
-                it->second.push_back(msg->second);
+            if (!placed) {
+                clusters.push_back(std::vector<Message>(1, message));
             }
         }
-        raw_messages_.erase(msg);
-    }
-    // Second run: replace the raw_messages_.
-    for (auto it : pgn_groups) {
-        if (it.second.size() == 1) {
-            assertm(raw_messages_.count(it.first) == 0, "Duplicated PGN record with a different content");
-            raw_messages_.emplace(it.first, it.second[0].generalized());
+        const uint32_t pgn = group.first;
+        // clusters.size() means there is no generic row.
+        size_t generic_index = clusters.size();
+        if (clusters.size() == 1) {
+            generic_index = 0;
         } else {
-            // Several messages have the same PGN but different content, for example: DM1_0F and DM01_SC.
-            // Each such message will be stored using CAN ID as a key but we should also pick one to be stored by PGN.
-            // Let's use the first message with the standard number of bytes for that.
-            bool msg_by_pgn_stored = false;
-            for (const auto & msg : it.second) {
-                raw_messages_.emplace(msg.canId(), msg);
-                if (!msg_by_pgn_stored && (msg.dlc() == 8)) {
-                    // Insert a generalized message copy (i.e. without the suffix)
-                    raw_messages_.emplace(msg.pgn(), msg.generalized());
-                    msg_by_pgn_stored = true;
+            bool conflict = false;
+            for (size_t i = 0; i < clusters.size(); ++i) {
+                for (const auto &message : clusters[i]) {
+                    if (!message.defaultMark()) {
+                        continue;
+                    }
+                    if (generic_index == clusters.size()) {
+                        generic_index = i;
+                    } else if (!(clusters[generic_index].front() == clusters[i].front())) {
+                        conflict = true;
+                    }
                 }
             }
+            if (conflict) {
+                generic_index = clusters.size();
+            }
+        }
+        if (generic_index != clusters.size()) {
+            raw_messages_.emplace(j1939PgnKey(pgn), clusters[generic_index].front().generalized());
+        }
+        if (clusters.size() == 1) {
+            continue;
+        }
+        for (size_t i = 0; i < clusters.size(); ++i) {
+            if (i == generic_index) {
+                continue;
+            }
+            for (const auto &message : clusters[i]) {
+                raw_messages_.emplace(j1939SaKey(pgn, message.sa()), message);
+            }
         }
     }
-    pgn_groups.clear();
 }
 
 void DbcParser::generatePgnOutput(std::ofstream *out) const{
