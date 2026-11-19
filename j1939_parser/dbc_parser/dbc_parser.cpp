@@ -12,6 +12,8 @@
 
 bool DbcParser::parseFile(const std::string &dbc_path) {
     top_level_ = true;
+    load_error_ = false;
+    load_error_text_.clear();
     last_message_.reset(nullptr);
     if (verbose_) {
         std::cout << dbc_path << std::endl;
@@ -61,6 +63,10 @@ bool DbcParser::parseFile(const std::string &dbc_path) {
     storeLastMessage();
     if (attribute_error_) {
         std::cerr << attribute_error_text_ << std::endl;
+        return false;
+    }
+    if (load_error_) {
+        std::cerr << load_error_text_ << std::endl;
         return false;
     }
     return true;
@@ -268,7 +274,10 @@ void DbcParser::topLevelParser(const std::string &line) {
         uint32_t can_id = std::stoll(fields[1]);
         auto it = raw_messages_.find(can_id);
         assertm(it != raw_messages_.end(), "VAL_ record refers to unknown CAN ID");
-        it->second.addValues(fields);
+        if (!it->second.addValues(fields) && !load_error_) {
+            load_error_ = true;
+            load_error_text_ = it->second.signalError();
+        }
     } else if (type4 == "BA_ ") {
         attributeParser(line);
     }
@@ -360,5 +369,9 @@ void DbcParser::attributeParser(const std::string &line) {
 void DbcParser::signalsParser(const std::string &line) {
     assertm(line.substr(0, 5) == " SG_ ", "SG_ record missing.");
     assertm(last_message_ != nullptr, "Unepxected SG_ record");
-    last_message_->addSignal(line);
+    // A short SG_ line is skipped. A repeated plain start bit fails the file.
+    if (!last_message_->addSignal(line) && last_message_->hasSignalError() && !load_error_) {
+        load_error_ = true;
+        load_error_text_ = last_message_->signalError();
+    }
 }

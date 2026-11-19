@@ -309,8 +309,8 @@ TEST_F(DbcCGenTest, EndiannessAndOtherLayoutFieldsDoNotCollapse) {
 TEST_F(DbcCGenTest, SpnNamesMuxBytesAndNoStrings) {
     std::string dbc =
             "BO_ 100 A-B: 8 X\n"
-            " SG_ Z : 24|4@1+ (1,0) [0|1] \"\" X\n"
-            " SG_ A : 24|4@1+ (1,0) [0|1] \"\" X\n"
+            " SG_ Z m1 : 24|4@1+ (1,0) [0|1] \"\" X\n"
+            " SG_ A m0 : 24|4@1+ (1,0) [0|1] \"\" X\n"
             " SG_ Be : 7|2@0+ (1.0f,0) [0|3] \"\" X\n"
             " SG_ Signed : 32|8@1- (1,0) [-128|127] \"\" X\n"
             "\n"
@@ -356,8 +356,8 @@ TEST_F(DbcCGenTest, SpnNamesMuxBytesAndNoStrings) {
 
     dbc =
             "BO_ 100 A-B: 8 X\n"
-            " SG_ Z : 24|4@1+ (1,0) [0|1] \"\" X\n"
-            " SG_ A : 24|4@1+ (1,0) [0|1] \"\" X\n"
+            " SG_ Z m1 : 24|4@1+ (1,0) [0|1] \"\" X\n"
+            " SG_ A m0 : 24|4@1+ (1,0) [0|1] \"\" X\n"
             " SG_ Be : 7|2@0+ (1.0f,0) [0|3] \"\" X\n"
             " SG_ Signed : 32|8@1- (1,0) [-128|127] \"\" X\n"
             "\n"
@@ -473,7 +473,20 @@ TEST_F(DbcCGenTest, SpnNamesMuxBytesAndNoStrings) {
         }
     }
     EXPECT_EQ(named_b, 1);
-    EXPECT_EQ(mux_pgn.signals_.size(), 6u);
+    // Switch, A, B, Both, Alt, Wide, Bare, Tail. A shares bit 8 with B, Alt shares bit 16 with Both.
+    EXPECT_EQ(mux_pgn.signals_.size(), 8u);
+    int named_a = 0;
+    int named_alt = 0;
+    for (const auto &spn : mux_pgn.signals_) {
+        if (spn.name_ == "A") {
+            named_a++;
+        }
+        if (spn.name_ == "Alt") {
+            named_alt++;
+        }
+    }
+    EXPECT_EQ(named_a, 1);
+    EXPECT_EQ(named_alt, 1);
 
     Output stripped = generate(dbc, true, "sample");
     ASSERT_TRUE(stripped.ok) << stripped.error;

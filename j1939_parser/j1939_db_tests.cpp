@@ -289,8 +289,7 @@ TEST(J1939SignalCodec, MatchesFrameBitsAcrossLayouts) {
     ASSERT_EQ(j1939_signal_raw(payload, 8, &wide, &raw), 0);
     EXPECT_EQ(raw, ~0ull);
 
-    // 64-bit Motorola. J1939_frame::read_bits shifts a 32-bit int, so a 56-bit
-    // shift is undefined there. Compare the C codec with write_bits instead.
+    // 64-bit Motorola at start bit 7. The byte is widened before a shift past bit 31.
     j1939_signal_t wide_be = sigOf(7, 64, 0);
     const uint64_t pattern = 0x123456789ULL;
     frame.reset(0xA5);
@@ -300,6 +299,7 @@ TEST(J1939SignalCodec, MatchesFrameBitsAcrossLayouts) {
     EXPECT_EQ(memcmp(payload, frame.buffer_, 8), 0);
     ASSERT_EQ(j1939_signal_raw(payload, 8, &wide_be, &raw), 0);
     EXPECT_EQ(raw, pattern);
+    EXPECT_EQ(frame.read_bits(7, 64, false), pattern);
 }
 
 TEST(J1939SignalCodec, RawPhysStoreAndBytesRejectBadSignals) {

@@ -413,7 +413,7 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
     std::string symbol = cIdent(name_.empty() ? "j1939" : name_);
     StringBlob blob;
     struct FlatEnum {
-        uint32_t value;
+        uint64_t value;
         uint32_t name_off;
     };
     std::vector<FlatEnum> enums;
@@ -536,7 +536,11 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
     if (!enums.empty()) {
         c << "static const j1939_enum_t " << symbol << "_enums[] = {\n";
         for (const FlatEnum &en : enums) {
-            c << "    { " << en.value << "u, " << (no_strings ? "J1939_NO_NAME" : std::to_string(en.name_off) + "u") << " },\n";
+            // `u` fits every value that fits in uint32_t. A wider wire pattern needs ull
+            // so a 32-bit compiler accepts the literal.
+            const char *suffix = en.value > 0xFFFFFFFFull ? "ull" : "u";
+            c << "    { " << en.value << suffix << ", "
+              << (no_strings ? "J1939_NO_NAME" : std::to_string(en.name_off) + "u") << " },\n";
         }
         c << "};\n\n";
     }

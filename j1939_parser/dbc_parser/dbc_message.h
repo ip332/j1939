@@ -22,11 +22,13 @@ class Message {
     uint8_t sa_;
     // Number of bytes in the payload.
     uint16_t dlc_;
-    // All signals, ordered by the start bit. The first signal at a start bit wins;
-    // a multiplex alternative that shares that bit is kept only in signal_list_.
+    // Signals keyed by start bit. The packed union cannot overlay two signals, so the
+    // first one at a start bit stays here. The PGN table uses signal_list_ instead.
     std::map <uint16_t, Signal> signals_;
     // Every signal, including multiplex alternatives that share a start bit.
     std::vector<Signal> signal_list_;
+    // Set when a non-multiplexed signal repeats a start bit, or a VAL_ value does not fit.
+    std::string signal_error_;
     // We also need ability to find a signal by name.
     std::map <std::string, uint16_t> start_bit_by_name_;
     // BA_ "SPN" BO_. 0 when the message has no SPN attribute.
@@ -71,6 +73,10 @@ public:
 
     // Every signal in parse order, including ones that share a start bit.
     const std::vector<Signal> &allSignals() const { return signal_list_; }
+
+    bool hasSignalError() const { return !signal_error_.empty(); }
+
+    const std::string &signalError() const { return signal_error_; }
 
     Signal *findSignal(const std::string &name);
 

@@ -33,16 +33,15 @@ class Signal {
     bool signed_;
     // Most of the signals are encoded in little-endian format but not all.
     bool little_endian_;
-    // Scalar and offset will be used to convert the raw value into a human readable value (mph, degree, etc.)
-    float scalar_;
-    float offset_;
     double min_;
     double max_;
     // Not sure why do we need units here but just in case.
     std::string units_;
 
-    // Stores list all enums values and their names.
-    std::map<uint32_t, std::string> enum_map_;
+    // Enum values are the raw wire pattern, wide enough for a 64-bit signal.
+    std::map<uint64_t, std::string> enum_map_;
+    // Set when a VAL_ number does not fit in uint64_t.
+    std::string value_error_;
 
     // J1939 SPN attribute (BA_ "SPN"). 0 when the DBC does not assign one.
     uint32_t spn_ = 0;
@@ -105,7 +104,9 @@ public:
 
     double maxValue() const { return max_; }
 
-    const std::map<uint32_t, std::string> &enums() const { return enum_map_; }
+    const std::map<uint64_t, std::string> &enums() const { return enum_map_; }
+
+    const std::string &valueError() const { return value_error_; }
 
     // Bit layout, endianness, scale, multiplex and enums. Names and SPNs are not compared.
     bool sameLayout(const Signal &other) const;
@@ -113,8 +114,8 @@ public:
     // Compares two signals.
     bool operator==(const Signal & other) const {
         bool result = start_bit_ == other.start_bit_ &&
-                      length_ == other.length_ && offset_ == other.offset_ && signed_ == other.signed_ &&
-                      scalar_ == other.scalar_ && min_ == other.min_ && max_ == other.max_ &&
+                      length_ == other.length_ && offset_d_ == other.offset_d_ && signed_ == other.signed_ &&
+                      scale_d_ == other.scale_d_ && min_ == other.min_ && max_ == other.max_ &&
                       little_endian_ == other.little_endian_ &&
                       enum_map_.size() == other.enum_map_.size();
         if (result) {
@@ -136,7 +137,8 @@ public:
     std::string toGetSetMethod() const;
 
     // Adds the list of values (a tokenized VAL_ record from the DBC file) to the signal.
-    void addValue(const std::vector<std::string> &fields);
+    // Returns false when a value is empty, negative, has trailing junk, or does not fit in uint64_t.
+    bool addValue(const std::vector<std::string> &fields);
 
     // Creates a new instance of the SPN class and fills it out with *this parameters.
     SPN toSpn() const;

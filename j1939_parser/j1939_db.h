@@ -25,7 +25,7 @@ enum {
 #define J1939_NO_NAME 0xFFFFFFFFu
 
 typedef struct j1939_enum {
-    uint32_t value;
+    uint64_t value; /* raw wire pattern; wider than a signed 32-bit VAL_ parse */
     uint32_t name_off;
 } j1939_enum_t;
 
