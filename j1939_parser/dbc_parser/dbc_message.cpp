@@ -161,11 +161,23 @@ std::string Message::toUnion() const {
 bool Message::addSignal(const std::string &string) {
     Signal signal(string);
     if (signal.valid()) {
+        signal_list_.push_back(signal);
+        // emplace keeps the first signal when two multiplex values share a start bit.
+        // The PGN and union outputs still see that first signal; the C database sees signal_list_.
         signals_.emplace(signal.startBit(), signal);
         start_bit_by_name_.emplace(signal.name(), signal.startBit());
         return true;
     }
     return false;
+}
+
+Signal *Message::findSignal(const std::string &name) {
+    for (auto &signal : signal_list_) {
+        if (signal.name() == name) {
+            return &signal;
+        }
+    }
+    return nullptr;
 }
 
 bool Message::addValues(const std::vector <std::string> &fields) {
@@ -175,10 +187,14 @@ bool Message::addValues(const std::vector <std::string> &fields) {
     }
     auto start_bit = start_bit_by_name_.find(fields[2]);
     assertm(start_bit != start_bit_by_name_.end(), "Unexpected signal name in  VAL_ record");
+    Signal *signal = findSignal(fields[2]);
+    assertm(signal != nullptr, "Unexpected signal name in VAL_ record");
+    signal->addValue(fields);
     auto it = signals_.find(start_bit->second);
     assertm(it != signals_.end(), "Unexpected start bit while processing VAL_ record");
-
-    it->second.addValue(fields);
+    if (it->second.name() == fields[2]) {
+        it->second.addValue(fields);
+    }
     return true;
 }
 

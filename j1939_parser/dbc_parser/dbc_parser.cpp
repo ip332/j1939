@@ -5,8 +5,10 @@
 #include "dbc_parser.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <sstream>
 
 bool DbcParser::parseFile(const std::string &dbc_path) {
     top_level_ = true;
@@ -57,6 +59,10 @@ bool DbcParser::parseFile(const std::string &dbc_path) {
         top_level_ ? topLevelParser(line) : signalsParser(line);
     }
     storeLastMessage();
+    if (attribute_error_) {
+        std::cerr << attribute_error_text_ << std::endl;
+        return false;
+    }
     return true;
 }
 
@@ -248,6 +254,91 @@ void DbcParser::topLevelParser(const std::string &line) {
         auto it = raw_messages_.find(can_id);
         assertm(it != raw_messages_.end(), "VAL_ record refers to unknown CAN ID");
         it->second.addValues(fields);
+    } else if (type4 == "BA_ ") {
+        attributeParser(line);
+    }
+}
+
+Message *DbcParser::findMutable(uint32_t can_id) {
+    auto it = raw_messages_.find(can_id);
+    if (it != raw_messages_.end()) {
+        return &it->second;
+    }
+    return nullptr;
+}
+
+static bool parseU32(const std::string &text, uint32_t *out) {
+    char *end = nullptr;
+    unsigned long value = strtoul(text.c_str(), &end, 10);
+    if (end == text.c_str() || *end != '\0' || value > 0xFFFFFFFFul) {
+        return false;
+    }
+    *out = static_cast<uint32_t>(value);
+    return true;
+}
+
+void DbcParser::attributeParser(const std::string &line) {
+    auto open = line.find('"');
+    if (open == std::string::npos) {
+        return;
+    }
+    auto close = line.find('"', open + 1);
+    if (close == std::string::npos) {
+        return;
+    }
+    std::string attr = line.substr(open + 1, close - open - 1);
+    if (attr != "SPN" && attr != "J1939Default") {
+        return;
+    }
+    std::string rest = line.substr(close + 1);
+    auto semi = rest.find(';');
+    if (semi != std::string::npos) {
+        rest.resize(semi);
+    }
+    std::vector<std::string> tok;
+    std::stringstream stream(rest);
+    std::string word;
+    while (stream >> word) {
+        tok.push_back(word);
+    }
+    if (tok.size() < 3) {
+        return;
+    }
+    uint32_t can_id = 0;
+    if (!parseU32(tok[1], &can_id)) {
+        return;
+    }
+    Message *message = findMutable(can_id);
+    if (message == nullptr) {
+        attribute_error_ = true;
+        attribute_error_text_ = "BA_ \"" + attr + "\" refers to unknown CAN ID " + tok[1];
+        return;
+    }
+    if (attr == "J1939Default" && tok[0] == "BO_") {
+        uint32_t flag = 0;
+        if (parseU32(tok[2], &flag) && flag != 0) {
+            message->markDefault();
+        }
+        return;
+    }
+    if (attr == "SPN" && tok[0] == "BO_") {
+        uint32_t spn = 0;
+        if (parseU32(tok[2], &spn)) {
+            message->setMessageSpn(spn);
+        }
+        return;
+    }
+    if (attr == "SPN" && tok[0] == "SG_" && tok.size() >= 4) {
+        Signal *signal = message->findSignal(tok[2]);
+        if (signal == nullptr) {
+            attribute_error_ = true;
+            attribute_error_text_ = "BA_ \"SPN\" refers to unknown signal " + tok[2];
+            return;
+        }
+        uint32_t spn = 0;
+        if (parseU32(tok[3], &spn)) {
+            signal->setSpn(spn);
+        }
     }
 }
 

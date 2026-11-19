@@ -3,6 +3,11 @@ cmake_minimum_required(VERSION 3.16)
 project(J1939)
 
 set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_compile_options("$<$<COMPILE_LANGUAGE:C>:-Wall;-Wextra;-Werror;-Wno-unused-parameter>")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 option(ENABLE_COVERAGE "Build with gcov instrumentation for coverage reports" OFF)
@@ -60,6 +65,7 @@ install(TARGETS dbc_compiler RUNTIME DESTINATION bin)
 find_package(GTest)
 
 add_definitions(-DDBC_FOLDER="${CMAKE_CURRENT_SOURCE_DIR}/tests/dbc/")
+add_definitions(-DJ1939_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/j1939_parser")
 # Sample CAN logs: committed excerpts in testdata/canboat/, and the full captures that
 # scripts/fetch_test_logs.sh downloads into testdata/external/ (see testdata/README.md).
 add_definitions(-DTESTDATA_FOLDER="${CMAKE_CURRENT_SOURCE_DIR}/testdata/")
@@ -87,7 +93,7 @@ add_executable(all_tests ${ALL_TESTS})
 add_test(all_tests ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/all_tests)
 
 # Tell linker about all libs to be used there
-target_link_libraries(all_tests GTest::GTest GTest::Main GTest::gmock j1939_parser can_streams can_sandbox_lib can_reader)
+target_link_libraries(all_tests GTest::GTest GTest::Main GTest::gmock j1939_parser can_streams can_sandbox_lib can_reader ${CMAKE_DL_LIBS})
 # Make it discoverable
 gtest_discover_tests(all_tests)
 
