@@ -5,6 +5,8 @@
 #include <iostream>
 #include <cassert>
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include "dbc_signal.h"
 
 // A helper function to split a string onto fields by a delimiter
@@ -107,8 +109,7 @@ Signal::Signal(const std::string &line) : valid_(false) {
     std::vector <std::string> scale_offset = splitString(pair1, ',');
     scale_literal_ = scale_offset[0];
     offset_literal_ = scale_offset[1];
-    scalar_ = std::stof(scale_offset[0]);
-    offset_ = std::stof(scale_offset[1]);
+    // Keep the double from the decimal text. A float factor such as 1e-7 is already rounded.
     scale_d_ = std::stod(scale_offset[0]);
     offset_d_ = std::stod(scale_offset[1]);
 
@@ -134,7 +135,7 @@ std::string Signal::toSpnString() const {
     out << "\t\t{\"" << name_ << "\", " << start_bit_ << ", " << length_ << ", ";
     out << (signed_ ? "true, " : "false, ");
     out << (little_endian_ ? "true, " : "false, ");
-    out << scalar_ << ", " << offset_ << ", ";
+    out << scale_d_ << ", " << offset_d_ << ", ";
     out << min_ << ", " << max_ << ", {";
     if (!enum_map_.empty()) {
         out << "\n\t\t\t";
@@ -158,19 +159,32 @@ std::string Signal::toSpnString() const {
 // The vector represents the DBC VAL_ record, separated onto fields using space as a delimeter, e.g.
 //     VAL_ 2566887215 pVehicle_Event_Status__Accelerat 2 "Error" 0 "Off" 1 "On" 3 "Not-Available" ;
 // is expected to be passed in as a vector of 12 strings.
-void Signal::addValue(const std::vector <std::string> &fields) {
+bool Signal::addValue(const std::vector <std::string> &fields) {
     // The first three indices represent the record type, CAN ID and the Signal name.
-    for (size_t i = 3; i < fields.size() - 1; i += 2) {
-        uint32_t value = std::stoi(fields[i]);
+    for (size_t i = 3; i + 1 < fields.size(); i += 2) {
+        const std::string &text = fields[i];
+        // strtoull accepts a leading '-' and wraps. VAL_ values are wire patterns, so reject it.
+        if (text.empty() || text[0] == '-') {
+            value_error_ = "VAL_ value \"" + text + "\" is not an unsigned integer";
+            return false;
+        }
+        errno = 0;
+        char *end = nullptr;
+        unsigned long long value = std::strtoull(text.c_str(), &end, 10);
+        if (end == text.c_str() || *end != '\0' || errno == ERANGE) {
+            value_error_ = "VAL_ value \"" + text + "\" does not fit in an unsigned 64-bit integer";
+            return false;
+        }
         std::string name(fields[i + 1]);
-        auto it = enum_map_.find(value);
+        auto it = enum_map_.find(static_cast<uint64_t>(value));
         if (it != enum_map_.end()) {
             // Ignore full duplicates and assert on other cases.
             assertm(it->second == name, "Duplicated VAL_ record with a different content");
             continue;
         }
-        enum_map_.emplace(value, name);
+        enum_map_.emplace(static_cast<uint64_t>(value), name);
     }
+    return true;
 }
 
 std::string Signal::fieldType() const {
@@ -217,14 +231,14 @@ std::string Signal::toGetSetMethod() const {
     std::stringstream out;
     std::string snake_name = toSnakeCase(name_);
     out << "\n";
-    if (scalar_ == 1 && offset_ == 0) {
+    if (scale_d_ == 1 && offset_d_ == 0) {
         out << "\t" << fieldType() << snake_name << "() const { return fields." << snake_name << "; }\n";
         out << "\tvoid " << snake_name << "(" << fieldType() << "value) { fields." << snake_name << " = value; }\n";
     } else {
-        out << "\tdouble " << snake_name << "() const { return fields." << snake_name << " * " << scalar_ << " + "
-            << offset_ << "; }\n";
-        out << "\tvoid " << snake_name << "(double value) { fields." << snake_name << " = (value - " << offset_
-            << ") / " << scalar_ << "; }\n";
+        out << "\tdouble " << snake_name << "() const { return fields." << snake_name << " * " << scale_d_ << " + "
+            << offset_d_ << "; }\n";
+        out << "\tvoid " << snake_name << "(double value) { fields." << snake_name << " = (value - " << offset_d_
+            << ") / " << scale_d_ << "; }\n";
     }
     return out.str();
 
@@ -250,8 +264,8 @@ SPN Signal::toSpn() const {
     SPN spn;
     spn.name_ = name_.c_str();
     spn.length_ = length_;
-    spn.offset_ = offset_;
-    spn.scalar_ = scalar_;
+    spn.offset_ = offset_d_;
+    spn.scalar_ = scale_d_;
     spn.start_bit_ = start_bit_;
     spn.signedness_ = signed_;
     spn.little_endian_ = little_endian_;
@@ -268,8 +282,8 @@ std::string Signal::toString() const {
     output << "len: " << length_ << ", ";
     output << "signed: " << signed_ << ", ";
     output << "LE: " << little_endian_ << ", ";
-    output << "offset: " << offset_ << ", ";
-    output << "scalar: " << scalar_;
+    output << "offset: " << offset_d_ << ", ";
+    output << "scalar: " << scale_d_;
     if (!enum_map_.empty()) {
         for (auto e : enum_map_) {
             output << std::endl << "    " << e.second << " = " << e.first;

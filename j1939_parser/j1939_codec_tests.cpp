@@ -156,6 +156,32 @@ TEST_F(J1939CodecTest, Set10BitsTest) {
     }
 }
 
+TEST(MakeMaskTest, CoversZeroFullAndRefusedLengths) {
+    EXPECT_EQ(make_mask(0), 0ull);
+    EXPECT_EQ(make_mask(32), 0xFFFFFFFFull);
+    EXPECT_EQ(make_mask(63), 0x7FFFFFFFFFFFFFFFull);
+    EXPECT_EQ(make_mask(64), ~0ull);
+    EXPECT_EQ(make_mask(65), 0ull);
+}
+
+TEST_F(J1939CodecTest, RefusesLengthZeroAndLengthAbove64) {
+    fillFrameWith(0x5A);
+    uint8_t before[16];
+    memcpy(before, frame_.buffer_, sizeof(before));
+    EXPECT_EQ(getValue(0, 0, true), 0ull);
+    EXPECT_EQ(getValue(3, 65, false), 0ull);
+    setValue(0x11, 0, 0, true);
+    setValue(0x11, 7, 200, false);
+    EXPECT_EQ(memcmp(before, frame_.buffer_, sizeof(before)), 0);
+}
+
+TEST_F(J1939CodecTest, Reads64BitMotorolaPastBit31) {
+    fillFrameWith(0);
+    const uint64_t pattern = 0x123456789ULL;
+    setValue(pattern, 7, 64, false);
+    EXPECT_EQ(getValue(7, 64, false), pattern);
+}
+
 // --- SPN::toString / toInteger / toDouble ---
 // Field order: name_, start_bit_, length_, signedness_, little_endian_, scalar_,
 // offset_, min_, max_, enum_names_.
@@ -195,6 +221,17 @@ TEST(SpnTest, ToIntegerUnsigned) {
 TEST(SpnTest, ToDoubleSignedWithoutScaling) {
     SPN spn{"Temp", 0, 8, true, true, 1, 0, 0, 0, {}};
     EXPECT_DOUBLE_EQ(spn.toDouble(0xFE), -2.0);
+}
+
+TEST(SpnTest, IntegerConversionRefusesLengthZeroAndLengthAbove64) {
+    SPN zero{"Wide", 0, 0, true, true, 1, 0, 0, 0, {}};
+    EXPECT_EQ(zero.toString(5), " Wide: 0");
+    EXPECT_EQ(zero.toInteger(5), 0);
+    EXPECT_DOUBLE_EQ(zero.toDouble(5), 0.0);
+    SPN bytes{"Vin", 0, 200, true, true, 2, 3, 0, 0, {}};
+    EXPECT_EQ(bytes.toString(5), " Vin: 0");
+    EXPECT_EQ(bytes.toInteger(5), 0);
+    EXPECT_DOUBLE_EQ(bytes.toDouble(5), 0.0);
 }
 
 // --- PGN::signalByName ---

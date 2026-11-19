@@ -42,6 +42,10 @@ class DbcParser {
     bool attribute_error_;
     std::string attribute_error_text_;
 
+    // Set when a VAL_ value does not fit, or two plain signals share a start bit.
+    bool load_error_;
+    std::string load_error_text_;
+
     // Parses given line.
     void topLevelParser(const std::string &line);
 
@@ -53,7 +57,7 @@ class DbcParser {
 
     void storeLastMessage();
 public:
-    DbcParser() : verbose_(false), attribute_error_(false) {}
+    DbcParser() : verbose_(false), attribute_error_(false), load_error_(false) {}
 
     // Parses the provided DBC file and stores its content in the raw_messages_ storage
     bool parseFile(const std::string &dbc_path);

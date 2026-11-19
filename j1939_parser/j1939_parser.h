@@ -23,10 +23,10 @@ class J1939Parser {
     const std::map<uint32_t, PGN> &dbc_;
 
     // Parsing/serialization shall be always defined with respect to the signal endianess.
-    uint64_t read_value(uint16_t start_bit, uint8_t length, bool little_endian) const {
+    uint64_t read_value(uint16_t start_bit, uint16_t length, bool little_endian) const {
         return frame_.read_bits(start_bit, length, little_endian);
     }
-    void write_value(uint64_t value, uint16_t start_bit, uint8_t length, bool little_endian) {
+    void write_value(uint64_t value, uint16_t start_bit, uint16_t length, bool little_endian) {
         frame_.write_bits(value, start_bit, length, little_endian);
     }
 

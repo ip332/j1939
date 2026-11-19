@@ -7,7 +7,11 @@
 #include <algorithm>
 #include <cmath>
 
-uint64_t J1939_frame::read_bits(uint16_t start_bit, uint8_t length, bool little_endian) const {
+uint64_t J1939_frame::read_bits(uint16_t start_bit, uint16_t length, bool little_endian) const {
+    // An integer signal is at most 64 bits. Length 0 would underflow the end-bit math.
+    if (length == 0 || length > 64) {
+        return 0;
+    }
     uint64_t target = 0;
     // Motorola (big endian)
     if (!little_endian) {
@@ -28,10 +32,12 @@ uint64_t J1939_frame::read_bits(uint16_t start_bit, uint8_t length, bool little_
             uint8_t loaded_bytes = 1;
             for(uint8_t index = msb_index; index < lsb_index; index++){
                 int8_t shift = length - msb_len - ((loaded_bytes - 1) * 8);
+                // Cast before the shift. The byte otherwise promotes to a 32-bit int,
+                // and a 32..63 bit shift is undefined.
                 if (index == msb_index) {
-                    target |= (buffer_[index] & make_mask(msb_len)) << shift;
+                    target |= (static_cast<uint64_t>(buffer_[index]) & make_mask(msb_len)) << shift;
                 } else {
-                    target |= buffer_[index] << shift;
+                    target |= static_cast<uint64_t>(buffer_[index]) << shift;
                 }
                 loaded_bytes++;
             }
@@ -58,7 +64,11 @@ uint64_t J1939_frame::read_bits(uint16_t start_bit, uint8_t length, bool little_
     return target;
 }
 
-void J1939_frame::write_bits(uint64_t value, uint16_t start_bit, uint8_t length, bool little_endian) {
+void J1939_frame::write_bits(uint64_t value, uint16_t start_bit, uint16_t length, bool little_endian) {
+    // Same refusal as read_bits: do not walk off the buffer for an empty or byte-string field.
+    if (length == 0 || length > 64) {
+        return;
+    }
     // Mask the value
     value &= make_mask(length);
 
@@ -73,7 +83,7 @@ void J1939_frame::write_bits(uint64_t value, uint16_t start_bit, uint8_t length,
         if(msb_index == lsb_index){
             // Create a mask of ones the length of the signal and shift to proper location
             uint8_t shift = (start_bit%8) + 1 - length;
-            uint8_t mask = ((0x01<<length) - 1) << shift;
+            uint8_t mask = ((1u << length) - 1) << shift;
             // clear existing data
             buffer_[msb_index] &= ~mask;
             // Load in signal
@@ -138,6 +148,10 @@ std::string SPN::toString(uint64_t value) const {
         }
         return " " + name + ": " + enum_names_.at(value);
     }
+    // The sign bit lives in a uint64. A byte string has no integer value here.
+    if (length_ == 0 || length_ > 64) {
+        return " " + name + ": 0";
+    }
     std::string value_str;
     if (signedness_) {
         int64_t msb_sign_mask = 1ULL << (length_ - 1);
@@ -155,6 +169,9 @@ std::string SPN::toString(uint64_t value) const {
 }
 
 int64_t SPN::toInteger(uint64_t value) const {
+    if (length_ == 0 || length_ > 64) {
+        return 0;
+    }
     value &= make_mask(length_);
     // perform sign extension
     if (signedness_){
@@ -167,6 +184,9 @@ int64_t SPN::toInteger(uint64_t value) const {
 }
 
 double SPN::toDouble(uint64_t value) const {
+    if (length_ == 0 || length_ > 64) {
+        return 0;
+    }
     value &= make_mask(length_);
     // perform sign extension
     if (signedness_){
