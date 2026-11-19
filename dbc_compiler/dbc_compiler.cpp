@@ -1,5 +1,7 @@
 #include <iostream>
+#include <fstream>
 #include <memory>
+#include <sstream>
 
 #include "dbc_parser.h"
 #include "options.h"
@@ -23,18 +25,22 @@ int main(int argc, const char* argv[]) {
     std::vector<std::string> inputs;
     std::string pgn_path;
     std::string union_path;
+    std::string c_path;
     std::string var_name;
+    bool no_strings = false;
 
     options.addOption("-in", "Full path of the input DBC file (multiple input files are supported).", &inputs);
     options.addOption("-name", "Defines variable name in the output files. By default, the first input DBC name will be used.", &var_name);
     options.addOption("-pgn_path", "Full path of the output file to store the DBC content in PGN format.", &pgn_path);
     options.addOption("-union_path", "Full path of the output file to store the DBC content in the 'union' format.", &union_path);
+    options.addOption("-c_path", "Full path of the generated plain-C database (.c). A matching .h is written beside it.", &c_path);
+    options.addOption("-no-strings", "Omit signal and message names from the plain-C database.", &no_strings);
 
     if (!options.processArgs(argc, argv)) {
         return 1;
     }
 
-    if (inputs.size() == 0 || (union_path.empty() && pgn_path.empty())) {
+    if (inputs.size() == 0 || (union_path.empty() && pgn_path.empty() && c_path.empty())) {
         printf( "Usage: dbc_compiler <options>\n");
         printf( "   where <options> could be:\n");
         options.print();
@@ -51,6 +57,33 @@ int main(int argc, const char* argv[]) {
             return -3;
         }
     }
+    // The C database has its own collapse rule and must see every source address,
+    // so it is emitted before removeDuplicates() rewrites the message keys.
+    if (!c_path.empty()) {
+        std::string header_path = c_path;
+        auto dot = header_path.rfind('.');
+        if (dot == std::string::npos) {
+            header_path += ".h";
+        } else {
+            header_path.replace(dot, std::string::npos, ".h");
+        }
+        std::ostringstream c_text;
+        std::ostringstream h_text;
+        std::string error;
+        if (!parser.generateCOutput(c_text, h_text, no_strings, error)) {
+            std::cerr << error << std::endl;
+            return 4;
+        }
+        std::ofstream c_file(c_path.c_str());
+        std::ofstream h_file(header_path.c_str());
+        if (!c_file.is_open() || !h_file.is_open()) {
+            std::cerr << "Error opening C database output " << c_path << std::endl;
+            return 2;
+        }
+        c_file << c_text.str();
+        h_file << h_text.str();
+    }
+
     // TODO: add option to disable the following step.
     parser.removeDuplicates();
 

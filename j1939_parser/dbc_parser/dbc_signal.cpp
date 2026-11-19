@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <cassert>
+#include <cctype>
 #include "dbc_signal.h"
 
 // A helper function to split a string onto fields by a delimiter
@@ -69,7 +70,28 @@ Signal::Signal(const std::string &line) : valid_(false) {
 
     int fmt_idx = 4;
     if (fields[3] != ":") {
-        // Sometimes there is a suffix (m0, m1, etc.) after the signal name.
+        // Multiplex marker: "M" (the switch), "m16" (shown when the switch is 16),
+        // or "m16M" (extended multiplex: both a switch and a switched signal).
+        const std::string &mux = fields[3];
+        if (mux == "M") {
+            multiplexor_ = true;
+        } else if (!mux.empty() && mux[0] == 'm') {
+            size_t i = 1;
+            unsigned value = 0;
+            bool digits = false;
+            while (i < mux.size() && std::isdigit(static_cast<unsigned char>(mux[i]))) {
+                digits = true;
+                value = value * 10u + static_cast<unsigned>(mux[i] - '0');
+                i++;
+            }
+            if (digits && value <= 0xFFFFu) {
+                multiplexed_ = true;
+                mux_value_ = static_cast<uint16_t>(value);
+                if (i < mux.size() && mux[i] == 'M' && i + 1 == mux.size()) {
+                    multiplexor_ = true;
+                }
+            }
+        }
         fmt_idx++;
     }
 
@@ -83,11 +105,17 @@ Signal::Signal(const std::string &line) : valid_(false) {
 
     std::string pair1 = fields[fmt_idx + 1].substr(1, fields[fmt_idx + 1].length() - 2);
     std::vector <std::string> scale_offset = splitString(pair1, ',');
+    scale_literal_ = scale_offset[0];
+    offset_literal_ = scale_offset[1];
     scalar_ = std::stof(scale_offset[0]);
     offset_ = std::stof(scale_offset[1]);
+    scale_d_ = std::stod(scale_offset[0]);
+    offset_d_ = std::stod(scale_offset[1]);
 
     std::string pair2 = fields[fmt_idx + 2].substr(1, fields[fmt_idx + 2].length() - 2);
     std::vector <std::string> min_max = splitString(pair2, '|');
+    min_literal_ = min_max[0];
+    max_literal_ = min_max[1];
     min_ = std::stod(min_max[0]);
     max_ = std::stod(min_max[1]);
 
@@ -135,7 +163,6 @@ void Signal::addValue(const std::vector <std::string> &fields) {
     for (size_t i = 3; i < fields.size() - 1; i += 2) {
         uint32_t value = std::stoi(fields[i]);
         std::string name(fields[i + 1]);
-        std::cout << name << std::endl;
         auto it = enum_map_.find(value);
         if (it != enum_map_.end()) {
             // Ignore full duplicates and assert on other cases.
@@ -202,6 +229,21 @@ std::string Signal::toGetSetMethod() const {
     return out.str();
 
 // TODO: add special treatment for the field with fixed set of values (i.e. enum).
+}
+
+bool Signal::sameLayout(const Signal &other) const {
+    return start_bit_ == other.start_bit_ &&
+           length_ == other.length_ &&
+           signed_ == other.signed_ &&
+           little_endian_ == other.little_endian_ &&
+           scale_d_ == other.scale_d_ &&
+           offset_d_ == other.offset_d_ &&
+           min_ == other.min_ &&
+           max_ == other.max_ &&
+           multiplexor_ == other.multiplexor_ &&
+           multiplexed_ == other.multiplexed_ &&
+           mux_value_ == other.mux_value_ &&
+           enum_map_ == other.enum_map_;
 }
 
 SPN Signal::toSpn() const {

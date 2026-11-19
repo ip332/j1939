@@ -44,6 +44,20 @@ class Signal {
     // Stores list all enums values and their names.
     std::map<uint32_t, std::string> enum_map_;
 
+    // J1939 SPN attribute (BA_ "SPN"). 0 when the DBC does not assign one.
+    uint32_t spn_ = 0;
+    // Multiplex switch value. Meaningful when multiplexed_ is set.
+    uint16_t mux_value_ = 0;
+    bool multiplexor_ = false;
+    bool multiplexed_ = false;
+    // Decimal text from the DBC, so the C database does not round through float.
+    std::string scale_literal_;
+    std::string offset_literal_;
+    std::string min_literal_;
+    std::string max_literal_;
+    double scale_d_ = 1;
+    double offset_d_ = 0;
+
     bool valid_;
 
     // Returns standard C type which is required to represent this signal.
@@ -60,6 +74,41 @@ public:
     bool little_endian() const { return little_endian_; }
 
     std::string name() const { return name_; }
+
+    uint16_t bitLength() const { return length_; }
+
+    bool isSigned() const { return signed_; }
+
+    uint32_t spn() const { return spn_; }
+
+    void setSpn(uint32_t spn) { spn_ = spn; }
+
+    uint16_t muxValue() const { return mux_value_; }
+
+    bool isMultiplexor() const { return multiplexor_; }
+
+    bool isMultiplexed() const { return multiplexed_; }
+
+    const std::string &scaleLiteral() const { return scale_literal_; }
+
+    const std::string &offsetLiteral() const { return offset_literal_; }
+
+    const std::string &minLiteral() const { return min_literal_; }
+
+    const std::string &maxLiteral() const { return max_literal_; }
+
+    double scaleValue() const { return scale_d_; }
+
+    double offsetValue() const { return offset_d_; }
+
+    double minValue() const { return min_; }
+
+    double maxValue() const { return max_; }
+
+    const std::map<uint32_t, std::string> &enums() const { return enum_map_; }
+
+    // Bit layout, endianness, scale, multiplex and enums. Names and SPNs are not compared.
+    bool sameLayout(const Signal &other) const;
 
     // Compares two signals.
     bool operator==(const Signal & other) const {

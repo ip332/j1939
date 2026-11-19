@@ -8,6 +8,7 @@
 #include "dbc_signal.h"
 
 #include <map>
+#include <vector>
 
 // This class represents a single CAN message identified by its name and PGN (or CAN ID).
 class Message {
@@ -21,10 +22,17 @@ class Message {
     uint8_t sa_;
     // Number of bytes in the payload.
     uint16_t dlc_;
-    // All signals, ordered by the start bit.
+    // All signals, ordered by the start bit. The first signal at a start bit wins;
+    // a multiplex alternative that shares that bit is kept only in signal_list_.
     std::map <uint16_t, Signal> signals_;
+    // Every signal, including multiplex alternatives that share a start bit.
+    std::vector<Signal> signal_list_;
     // We also need ability to find a signal by name.
     std::map <std::string, uint16_t> start_bit_by_name_;
+    // BA_ "SPN" BO_. 0 when the message has no SPN attribute.
+    uint32_t message_spn_ = 0;
+    // BA_ "J1939Default" BO_ <id> 1. Marks the generic layout when one PGN has several.
+    bool default_mark_ = false;
     // The message name in a lower case, underscore separated format (aka "snake case")
     std::string snake_name_;
     // Source file name for debugging purposes.
@@ -57,7 +65,22 @@ public:
 
     uint16_t dlc() const { return dlc_; };
 
+    uint8_t sa() const { return sa_; }
+
     std::string name() const { return name_; }
+
+    // Every signal in parse order, including ones that share a start bit.
+    const std::vector<Signal> &allSignals() const { return signal_list_; }
+
+    Signal *findSignal(const std::string &name);
+
+    void setMessageSpn(uint32_t spn) { message_spn_ = spn; }
+
+    uint32_t messageSpn() const { return message_spn_; }
+
+    void markDefault() { default_mark_ = true; }
+
+    bool defaultMark() const { return default_mark_; }
 
     std::string snake_name() const { return snake_name_; }
 

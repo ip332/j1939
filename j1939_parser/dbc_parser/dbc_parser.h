@@ -9,6 +9,8 @@
 
 #include <fstream>
 #include <memory>
+#include <ostream>
+#include <string>
 
 // This class processes a single DBC file and generates the messages representation in several forms.
 class DbcParser {
@@ -36,14 +38,22 @@ class DbcParser {
     // Set to true if all messages loaded from the source DBC have extended flag.
     bool extended_only_;
 
+    // Set when a BA_ "SPN" record names a message or signal that was not loaded.
+    bool attribute_error_;
+    std::string attribute_error_text_;
+
     // Parses given line.
     void topLevelParser(const std::string &line);
 
     void signalsParser(const std::string &line);
 
+    void attributeParser(const std::string &line);
+
+    Message *findMutable(uint32_t can_id);
+
     void storeLastMessage();
 public:
-    DbcParser() : verbose_(false) {}
+    DbcParser() : verbose_(false), attribute_error_(false) {}
 
     // Parses the provided DBC file and stores its content in the raw_messages_ storage
     bool parseFile(const std::string &dbc_path);
@@ -58,6 +68,12 @@ public:
 
     // Outputs the raw_messages content into the provided stream as union of a packed structure and a bytes array.
     void generateUnionOutput(std::ofstream *out) const;
+
+    // Writes a plain-C const database (j1939_db.h layout) to the two streams.
+    // Uses the messages as parsed, before removeDuplicates(). On failure nothing
+    // is written and `error` explains the collapse or signal problem.
+    // `no_strings` leaves name_off as J1939_NO_NAME and omits the string blob.
+    bool generateCOutput(std::ostream &c_out, std::ostream &h_out, bool no_strings, std::string &error) const;
 
     // Generates run-time format into rt_messages_
     void generateRunTimeFormat();
