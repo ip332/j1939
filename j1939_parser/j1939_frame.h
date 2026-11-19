@@ -19,6 +19,17 @@
 #define CAN_EFF_FLAG 0x80000000U
 #endif
 
+// Extended-message keys. Priority and CAN_EFF_FLAG are not identity.
+// Bit 31 is the generic row for a PGN. Bit 30 is the row for one source address.
+// An 11-bit id stays in 0..0x7FF and is not stored as a PGN.
+inline uint32_t j1939PgnKey(uint32_t pgn) {
+    return CAN_EFF_FLAG | (pgn & 0x3FFFFu);
+}
+
+inline uint32_t j1939SaKey(uint32_t pgn, uint8_t sa) {
+    return 0x40000000u | ((pgn & 0x3FFFFu) << 8) | sa;
+}
+
 // Set rightmost "length" bits to 1 and return given mask.
 inline uint64_t make_mask(size_t length) {
     return length == 64 ? 0xFFFFFFFFFFFFFFFF : (1ul << length) - 1ul;

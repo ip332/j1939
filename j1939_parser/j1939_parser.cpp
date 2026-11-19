@@ -69,16 +69,35 @@ bool J1939Parser::toString(std::basic_ostream<char> &out, bool show_unset_bits) 
 }
 
 const PGN* J1939Parser::getPgn() const {
-    uint32_t can_id = frame_.canID();
-
-    auto it = dbc_.find(can_id);
-
-    if (it != dbc_.end()) {
-        return & it->second;
+    // An 11-bit frame is looked up by that id. An extended frame uses the DBC CAN id
+    // when the map still has it, then the source-address row, then the generic PGN
+    // row. Priority is not part of those last two keys.
+    if (!frame_.extended_) {
+        auto it = dbc_.find(frame_.canID() & 0x7FFu);
+        if (it != dbc_.end()) {
+            return &it->second;
+        }
+        // A hand-built map may store a non-extended id above 11 bits under that raw id.
+        // The sliced PGN is not a key.
+        it = dbc_.find(frame_.canID());
+        if (it == dbc_.end()) {
+            return nullptr;
+        }
+        return &it->second;
     }
-    it = dbc_.find(frame_.pgn_ );
-    if (it != dbc_.end() ) {
-        return & it->second;
+    // An undeduplicated map is still keyed by the DBC CAN id. removeDuplicates
+    // replaces those ids with the PGN and source-address keys below.
+    auto exact = dbc_.find(frame_.canID());
+    if (exact != dbc_.end()) {
+        return &exact->second;
+    }
+    auto specific = dbc_.find(j1939SaKey(frame_.pgn_, frame_.src_));
+    if (specific != dbc_.end()) {
+        return &specific->second;
+    }
+    auto generic = dbc_.find(j1939PgnKey(frame_.pgn_));
+    if (generic != dbc_.end()) {
+        return &generic->second;
     }
     return nullptr;
 }
