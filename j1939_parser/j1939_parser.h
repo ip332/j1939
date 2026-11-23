@@ -97,7 +97,8 @@ public:
         return setSignalValue(name.c_str(), enum_name);
     }
 
-    // Find all PGNs which may contain the given signal
+    // Return every database key whose message contains this signal name.
+    // Matches are by name; an unknown name returns an empty set.
     static std::set<uint32_t> pgnFor(const std::string & signal, const std::map<uint32_t, PGN> &dbc);
 };
 

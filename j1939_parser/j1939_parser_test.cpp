@@ -529,3 +529,11 @@ TEST_F(J1939ParserTest, SetValuesConfigBigEndianTest) {
     EXPECT_EQ(frame_.buffer_[1], 6);
     EXPECT_EQ(frame_.buffer_[2], 64);
 }
+
+TEST(J1939ParserLookupTest, FindsEveryMessageContainingTheName) {
+    const SPN shared{"Shared", 0, 8, false, true, 1, 0, 0, 255, {}};
+    const std::map<uint32_t, PGN> dbc{{100, {"First", 1, {shared}}},
+                                       {101, {"Second", 1, {shared}}},
+                                       {102, {"Empty", 1, {}}}};
+    EXPECT_EQ(J1939Parser::pgnFor("Shared", dbc), (std::set<uint32_t>{100, 101}));
+}
