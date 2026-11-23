@@ -636,3 +636,85 @@ TEST_F(DbcCGenTest, GeneratedCCompiles) {
         ADD_FAILURE() << got.str();
     }
 }
+
+TEST_F(DbcCGenTest, PortableAccessorsCompileAndRunInCAndCpp) {
+    DbcParser parser;
+    ASSERT_TRUE(parser.parseFile(writeTemp(
+        "BO_ 100 Mixed: 16 X\n"
+        " SG_ Intel : 3|13@1+ (0.5,-2) [0|4093] \"\" X\n"
+        " SG_ Motorola : 23|12@0- (1,0) [-2048|2047] \"\" X\n"
+        " SG_ Wide : 32|64@1- (1,0) [0|0] \"\" X\n"
+        " SG_ Switch M : 96|8@1+ (1,0) [0|255] \"\" X\n"
+        " SG_ A m0 : 104|8@1+ (1,0) [0|255] \"\" X\n"
+        " SG_ B m1 : 104|8@1+ (1,0) [0|255] \"\" X\n"
+        "\nBO_ 101 Omitted: 1 X\n SG_ Other : 0|8@1+ (1,0) [0|255] \"\" X\n"
+        "\nBO_ 102 Bytes: 10 X\n SG_ Text : 0|80@1+ (1,0) [0|0] \"\" X\n"
+        "\nVAL_ 100 Intel 3 \"Three\" 4 \"On-Off\" 5 \"On Off\" ;\n")));
+    std::ostringstream header;
+    std::string error;
+    ASSERT_TRUE(parser.generateAccessorOutput(header, error)) << error;
+    EXPECT_EQ(header.str().find("__attribute__"), std::string::npos);
+    EXPECT_EQ(header.str().find("union"), std::string::npos);
+    std::string source =
+        "#define J1939_ACCESSORS_SELECT\n#define J1939_ACCESSORS_Mixed_100\n#define J1939_ACCESSORS_Bytes_102\n" + header.str() +
+        "\n#ifdef j1939_Omitted_101_DLC\n#error Message selection failed\n#endif\n"
+        "#include <assert.h>\nint main(void) {\n"
+        "uint8_t p[16]; memset(p, 255, sizeof(p));\n"
+        "j1939_Mixed_100_Intel_store_raw(p, 0x1234);\n"
+        "assert(p[0] == 0xa7 && p[1] == 0x91 && p[2] == 255);\n"
+        "assert(j1939_Mixed_100_Intel_raw(p) == 0x1234);\n"
+        "assert(j1939_Mixed_100_Intel_phys(p) == 2328);\n"
+        "assert(j1939_Mixed_100_Intel_Three == 3);\n"
+        "assert(j1939_Mixed_100_Intel_On_Off == 4);\n"
+        "assert(j1939_Mixed_100_Intel_On_Off_5 == 5);\n"
+        "j1939_Mixed_100_Motorola_store_raw(p, 0xabc);\n"
+        "assert(p[2] == 0xab && p[3] == 0xcf);\n"
+        "assert(j1939_Mixed_100_Motorola_raw(p) == 0xabc);\n"
+        "assert(j1939_Mixed_100_Motorola_phys(p) == -1348);\n"
+        "j1939_Mixed_100_Wide_store_raw(p, UINT64_C(0x8000000000000000));\n"
+        "assert(j1939_Mixed_100_Wide_raw(p) == UINT64_C(0x8000000000000000));\n"
+        "assert(j1939_Mixed_100_Wide_phys(p) == -9223372036854775808.0);\n"
+        "j1939_Mixed_100_A_store_raw(p, 42);\n"
+        "assert(j1939_Mixed_100_B_raw(p) == 42);\n"
+        "uint8_t text[10] = {1,2,3,4,5,6,7,8,9,10}, copy[10];\n"
+        "j1939_Bytes_102_Text_set_bytes(p, text);\n"
+        "j1939_Bytes_102_Text_get_bytes(p, copy);\n"
+        "assert(memcmp(text, copy, 10) == 0);\nreturn 0; }\n";
+    std::string path = writeTemp(source);
+    for (const std::string &compiler : {"cc -x c -std=c11", "c++ -x c++ -std=c++14"}) {
+        std::string binary = path + ".bin";
+        temp_paths_.push_back(binary);
+        ASSERT_EQ(system((compiler + " -Wall -Wextra -Werror -pedantic '" + path + "' -o '" + binary + "'").c_str()), 0);
+        EXPECT_EQ(system(("'" + binary + "'").c_str()), 0);
+    }
+}
+
+TEST_F(DbcCGenTest, AccessorsRejectInvalidLayoutWithoutPartialOutput) {
+    DbcParser parser;
+    ASSERT_TRUE(parser.parseFile(writeTemp("BO_ 100 Bad: 1 X\n SG_ TooWide : 7|16@0+ (1,0) [0|0] \"\" X\n\n")));
+    std::ostringstream out;
+    std::string error;
+    EXPECT_FALSE(parser.generateAccessorOutput(out, error));
+    EXPECT_TRUE(out.str().empty());
+    EXPECT_FALSE(error.empty());
+}
+
+TEST_F(DbcCGenTest, AccessorsRejectZeroLengthUnalignedBytesAndIdentifierCollisions) {
+    const std::vector<std::string> cases{
+        " SG_ Empty : 0|0@1+ (1,0) [0|0] \"\" X\n",
+        " SG_ Text : 1|80@1+ (1,0) [0|0] \"\" X\n",
+        " SG_ Text : 0|81@1+ (1,0) [0|0] \"\" X\n",
+        " SG_ Text : 7|80@0+ (1,0) [0|0] \"\" X\n",
+        " SG_ Same : 0|8@1+ (1,0) [0|0] \"\" X\n SG_ Same : 8|8@1+ (1,0) [0|0] \"\" X\n",
+        " SG_ A : 0|8@1+ (1,0) [0|0] \"\" X\n SG_ A_Label : 8|8@1+ (1,0) [0|0] \"\" X\n\nVAL_ 100 A 1 \"Label\" ;\n"
+    };
+    for (const auto &signals : cases) {
+        DbcParser parser;
+        ASSERT_TRUE(parser.parseFile(writeTemp("BO_ 100 Bad: 16 X\n" + signals + "\n")));
+        std::ostringstream out;
+        std::string error;
+        EXPECT_FALSE(parser.generateAccessorOutput(out, error)) << signals;
+        EXPECT_TRUE(out.str().empty());
+        EXPECT_FALSE(error.empty());
+    }
+}

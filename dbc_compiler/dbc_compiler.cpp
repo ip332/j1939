@@ -25,6 +25,7 @@ int main(int argc, const char* argv[]) {
     std::vector<std::string> inputs;
     std::string pgn_path;
     std::string union_path;
+    std::string accessor_path;
     std::string c_path;
     std::string var_name;
     bool no_strings = false;
@@ -33,6 +34,7 @@ int main(int argc, const char* argv[]) {
     options.addOption("-name", "Defines variable name in the output files. By default, the first input DBC name will be used.", &var_name);
     options.addOption("-pgn_path", "Full path of the output file to store the DBC content in PGN format.", &pgn_path);
     options.addOption("-union_path", "Full path of the output file to store the DBC content in the 'union' format.", &union_path);
+    options.addOption("-accessor_path", "Standalone portable C/C++ payload accessors (header).", &accessor_path);
     options.addOption("-c_path", "Full path of the generated plain-C database (.c). A matching .h is written beside it.", &c_path);
     options.addOption("-no-strings", "Omit signal and message names from the plain-C database.", &no_strings);
 
@@ -40,7 +42,7 @@ int main(int argc, const char* argv[]) {
         return 1;
     }
 
-    if (inputs.size() == 0 || (union_path.empty() && pgn_path.empty() && c_path.empty())) {
+    if (inputs.size() == 0 || (union_path.empty() && pgn_path.empty() && c_path.empty() && accessor_path.empty())) {
         printf( "Usage: dbc_compiler <options>\n");
         printf( "   where <options> could be:\n");
         options.print();
@@ -82,6 +84,17 @@ int main(int argc, const char* argv[]) {
         }
         c_file << c_text.str();
         h_file << h_text.str();
+    }
+
+    if (!accessor_path.empty()) {
+        std::ostringstream text;
+        std::string error;
+        if (!parser.generateAccessorOutput(text, error)) {
+            std::cerr << error << std::endl;
+            return 4;
+        }
+        auto file = getFile(accessor_path);
+        *file << text.str();
     }
 
     // TODO: add option to disable the following step.
