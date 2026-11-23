@@ -39,6 +39,8 @@ class J1939Parser {
     // Returns bits corresponded to given SPN.
     uint64_t spnValue(const SPN &spn) const;
 
+    bool signalActive(const PGN &pgn, const SPN &spn) const;
+
     // Output content into provided stream in a human readable form.
     void toStringPgn(const PGN &pgn, std::basic_ostream<char> &out, bool show_unset_bits) const;
 
