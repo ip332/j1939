@@ -147,6 +147,9 @@ struct SPN {
     double max_;
     // List all enums values and their meaning.
     std::map<uint32_t, std::string> enum_names_;
+    bool multiplexor_ = false;
+    bool multiplexed_ = false;
+    uint16_t mux_value_ = 0;
 
     // Return given value in human-readable format.
     std::string toString(uint64_t value) const;

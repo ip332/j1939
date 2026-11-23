@@ -151,7 +151,12 @@ std::string Signal::toSpnString() const {
             length += one_value.length();
         }
     }
-    out << "}},\n";
+    out << "}";
+    if (multiplexor_ || multiplexed_) {
+        out << ", " << (multiplexor_ ? "true" : "false")
+            << ", " << (multiplexed_ ? "true" : "false") << ", " << mux_value_;
+    }
+    out << "},\n";
     return out.str();
 };
 
@@ -249,6 +254,11 @@ bool Signal::sameLayout(const Signal &other) const {
 SPN Signal::toSpn() const {
     SPN spn;
     spn.name_ = name_.c_str();
+    spn.min_ = min_;
+    spn.max_ = max_;
+    spn.multiplexor_ = multiplexor_;
+    spn.multiplexed_ = multiplexed_;
+    spn.mux_value_ = mux_value_;
     spn.length_ = length_;
     spn.offset_ = offset_;
     spn.scalar_ = scalar_;

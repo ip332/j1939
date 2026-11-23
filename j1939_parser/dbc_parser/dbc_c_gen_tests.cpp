@@ -473,7 +473,9 @@ TEST_F(DbcCGenTest, SpnNamesMuxBytesAndNoStrings) {
         }
     }
     EXPECT_EQ(named_b, 1);
-    EXPECT_EQ(mux_pgn.signals_.size(), 6u);
+    EXPECT_EQ(mux_pgn.signals_.size(), 8u);
+    EXPECT_NE(mux_pgn.signalByName("A"), nullptr);
+    EXPECT_NE(mux_pgn.signalByName("Alt"), nullptr);
 
     Output stripped = generate(dbc, true, "sample");
     ASSERT_TRUE(stripped.ok) << stripped.error;
@@ -587,6 +589,23 @@ TEST_F(DbcCGenTest, UnknownSignalSpnFailsTheParse) {
             "\n"
             "BA_ \"SPN\" SG_ 100 Missing 5;\n";
     EXPECT_FALSE(parser.parseFile(writeTemp(dbc)));
+}
+
+TEST_F(DbcCGenTest, GeneratedPgnRetainsMultiplexMetadata) {
+    Message message("BO_ 100 Mux: 3 X\n");
+    ASSERT_TRUE(message.addSignal(" SG_ Switch M : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    ASSERT_TRUE(message.addSignal(" SG_ Nested m1M : 8|8@1+ (1,0) [0|255] \"\" X\n"));
+    ASSERT_TRUE(message.addSignal(" SG_ Alternative m1 : 16|8@1+ (1,0) [0|255] \"\" X\n"));
+    std::string source = "#include \"j1939_frame.h\"\n#include <cassert>\nconst PGN pgn = " + message.toPgnString() +
+        ";\nint main() { assert(pgn.signals_[0].multiplexor_); assert(!pgn.signals_[0].multiplexed_);"
+        "assert(pgn.signals_[1].multiplexor_ && pgn.signals_[1].multiplexed_);"
+        "assert(pgn.signals_[2].multiplexed_ && pgn.signals_[2].mux_value_ == 1); }\n";
+    std::string path = writeTemp(source);
+    std::string binary = path + ".bin";
+    temp_paths_.push_back(binary);
+    ASSERT_EQ(system(("c++ -x c++ -std=c++14 -Wall -Wextra -Werror -I '" + std::string(J1939_INCLUDE_DIR) +
+                      "' '" + path + "' -o '" + binary + "'").c_str()), 0);
+    EXPECT_EQ(system(("'" + binary + "'").c_str()), 0);
 }
 
 TEST_F(DbcCGenTest, GeneratedCCompiles) {

@@ -7,6 +7,31 @@
 #include <sstream>
 #include <algorithm>
 
+namespace {
+
+// Same order as the C database: start bit, multiplex value, multiplexor flag, name.
+// A message whose start bits are unique matches the old std::map order.
+bool pgnSignalLess(const Signal &left, const Signal &right) {
+    if (left.startBit() != right.startBit()) {
+        return left.startBit() < right.startBit();
+    }
+    if (left.muxValue() != right.muxValue()) {
+        return left.muxValue() < right.muxValue();
+    }
+    if (left.isMultiplexor() != right.isMultiplexor()) {
+        return left.isMultiplexor() < right.isMultiplexor();
+    }
+    return left.name() < right.name();
+}
+
+std::vector<Signal> signalsInPgnOrder(const std::vector<Signal> &signals) {
+    std::vector<Signal> ordered(signals);
+    std::sort(ordered.begin(), ordered.end(), pgnSignalLess);
+    return ordered;
+}
+
+}  // namespace
+
 Message::Message(const std::string &line) {
     // Example:
     // BO_ 2633984656 pDriveSystemStatus_144: 8 BCM_2
@@ -100,8 +125,8 @@ std::string Message::toPgnString(bool generic_name) const {
         msg_name = name_.substr(0, pos);
     }
     out << "{ \"" << msg_name << "\", " << dlc_ << ", {\n";
-    for (const auto & signal: signals_) {
-        out << signal.second.toSpnString();
+    for (const auto &signal : signalsInPgnOrder(signal_list_)) {
+        out << signal.toSpnString();
     }
     out << "\t}}";
     return out.str();
@@ -202,8 +227,8 @@ PGN Message::toPgn() const {
     PGN pgn;
     pgn.name_ = name_.c_str();
     pgn.dlc_ = dlc_;
-    for (const auto & pair: signals_) {
-        pgn.signals_.push_back(pair.second.toSpn());
+    for (const auto &signal : signalsInPgnOrder(signal_list_)) {
+        pgn.signals_.push_back(signal.toSpn());
     }
     return pgn;
 }
