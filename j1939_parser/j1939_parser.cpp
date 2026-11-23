@@ -243,7 +243,6 @@ std::set<uint32_t> J1939Parser::pgnFor(const std::string & signal, const std::ma
     for (const auto & it: dbc) {
         if (it.second.signalByName(signal.c_str())) {
             result.emplace(it.first);
-            break;
         }
     }
     return result;
