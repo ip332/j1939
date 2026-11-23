@@ -70,6 +70,9 @@ public:
     // Outputs the raw_messages content into the provided stream as union of a packed structure and a bytes array.
     void generateUnionOutput(std::ofstream *out) const;
 
+    // Portable, standalone per-message C/C++ payload accessors.
+    bool generateAccessorOutput(std::ostream &out, std::string &error) const;
+
     // Writes a plain-C const database (j1939_db.h layout) to the two streams.
     // Uses the messages as parsed, before removeDuplicates(). On failure nothing
     // is written and `error` explains the collapse or signal problem.

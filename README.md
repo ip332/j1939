@@ -3,7 +3,7 @@
 [![Build](https://github.com/ip332/j1939/actions/workflows/build.yml/badge.svg)](https://github.com/ip332/j1939/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A C++14 library for encoding and decoding J1939/CAN frames, plus a DBC compiler that turns `.dbc` files into compact, statically-typed C/C++ code — no runtime parsing, no dynamic allocation, suitable for safety-critical ECU code.
+A C++14 library for encoding and decoding J1939/CAN frames, plus a DBC compiler. For embedded targets, `-c_path` produces a plain-C const database with no constructors, allocation, or runtime DBC parsing. The C++ PGN map and host tools use dynamic allocation. This project does not establish safety certification.
 
 ## Summary
 
@@ -19,12 +19,12 @@ Both scenarios could be addressed with the same implementation, but the message-
 
 Regardless of the use case, encoding and decoding should behave consistently across all modules and subsystems. One option is to parse a DBC file at runtime, as the roscan project does, but this approach may not be acceptable for safety-critical applications. Compiling the DBC at build time also allows more thorough validation.
 
-This project therefore provides a DBC compiler that generates output in two formats — **PGN** and **Union** — from one or more input files.
+This project therefore provides a DBC compiler that generates a **plain-C database**, **portable accessors**, a **C++ PGN map**, and a legacy **packed union** — from one or more input files.
 
 ## Content
 
 * **J1939** — the library combining the DBC parser, runtime data types, and the J1939 encoding/decoding functionality. Built as a static library.
-* **dbc_compiler** — the DBC compiler itself, which processes multiple input files and generates output code in the two formats described below.
+* **dbc_compiler** — the DBC compiler itself, which processes multiple input files and generates the output formats described below.
 * **tests** — the unit test suite covering most of the library's components.
 * **can_reader** — a collection of classes, built as a static library, that handle long (multi-frame) messages and reading/writing a physical CAN port via the SocketCAN API.
 * **options** — a lightweight command-line parser. May be replaced with **gflags** in the future (TBD).
@@ -121,18 +121,63 @@ Average bus load: 8000.47 bytes/sec; duration: 23.615 sec.
                   1000.08 msg/sec
 ```
 
-##### PGN format
-The first format produces a single file where **all input DBC files** are compiled into one `std::map`:
+##### Plain-C database (embedded lookup)
+
+```bash
+bin/dbc_compiler -in tests/dbc/j1939.dbc -c_path generated_db.c
+```
+
+This writes `generated_db.c` and `generated_db.h`. Compile the generated C file
+and `j1939_parser/j1939_db.c` with the target's C11 compiler and include the generated
+header. All database storage is const arrays and a string blob, with a
+`const j1939_db_t` entry point declared in the generated header. Loading the tables
+runs no constructors and calls no allocator. Use `-no-strings` to omit names.
+
+`j1939_db_find` looks up a CAN ID/PGN; `j1939_signal_by_spn` searches the sorted
+SPN index across the database. `BA_ "SPN"` attributes supply SPN numbers (0 when
+absent). `j1939_signal_by_name` searches one message, and
+`j1939_messages_by_name` returns all matching messages. Multiplex alternatives
+are retained, including those sharing a start bit; use `j1939_signal_active`
+before decoding one. Extended multiplex ranges (`SG_MUL_VAL_`) and nested
+switch selection are not implemented.
+
+##### Portable message accessors
+
+```bash
+bin/dbc_compiler -in input.dbc -accessor_path payloads.h
+```
+
+This optional standalone C11/C++14 header emits explicit byte shifts and masks
+for each signal, including mixed Intel/Motorola messages and multiplex alternatives.
+There is no aggregate message union or runtime library dependency. Names use
+`j1939_<message>_<decimal CAN ID>_<signal>` followed by `_raw`, `_store_raw`,
+or `_phys`. Raw stores preserve all other payload bits. `_phys` applies signed
+interpretation, scale and offset; stores take raw wire values. Byte-aligned Intel
+signals wider than 64 bits get `_get_bytes` and `_set_bytes` instead.
+`VAL_` labels become prefixed `UINT64_C` defines; punctuation becomes underscores,
+and colliding labels receive a numeric suffix.
+
+By default all accessors are available. To include only selected messages, define
+`J1939_ACCESSORS_SELECT` and `J1939_ACCESSORS_<message>_<decimal CAN ID>` before
+including the header. Provide a payload at least as large as the message DLC.
+Accessors read or write the named bits directly; the caller selects the active
+multiplex alternative and sets the switch separately.
+
+##### PGN format (C++ host tools)
+This format produces a single file where **all input DBC files** are compiled into one `std::map`:
 ```c++
 std::map<uint32_t, PGN> j1939_dbc = {
         . . .
 };
 ```
+The map, strings, vectors, and enum maps allocate during initialization. Use the
+plain-C database for allocation-free embedded lookup.
+
 The `J1939` class uses this map to decode/encode arbitrary CAN frames (see `can_sandbox.cpp` for details).
 Note: by default, the name of the first input DBC file is used to build the map name (e.g., `j1939.dbc` → `j1939_dbc`). This can be overridden with the `-name` command-line option.
 
-##### Union format
-The second format packs a byte buffer and a bitfield struct into an unnamed union, which is saved to a header file.
+##### Legacy union format
+This legacy format packs a byte buffer and a bitfield struct into an unnamed union, which is saved to a header file.
 *Note: a single header file is generated for all listed input DBC files.*
 ```c++
 #define CTLEGO_MESSAGE_ID	0x8c210253
@@ -142,25 +187,25 @@ struct ctlego_message_t {
 	union {
 	    uint8_t data[CTLEGO_MESSAGE_DLC];
 	    struct {
-		uint16_t VehicleSpeed : 16;
-		uint8_t ControlEngine : 1;
-		uint16_t YawRate : 16;
-		uint8_t TransCurrentGear : 8;
+		uint64_t vehicle_speed : 16;
+		uint64_t control_engine : 1;
+		uint64_t yaw_rate : 16;
+		uint64_t trans_current_gear : 8;
 	    } fields __attribute__((packed));
 	};
 #ifdef __cplusplus
 
-	double vehicle_speed() const { return fields.VehicleSpeed * 0.001 + 0; }
-	void vehicle_speed(double value) { fields.VehicleSpeed = (value - 0) / 0.001; }
+	double vehicle_speed() const { return fields.vehicle_speed * 0.001 + 0; }
+	void vehicle_speed(double value) { fields.vehicle_speed = (value - 0) / 0.001; }
 
-	uint8_t control_engine() const { return fields.ControlEngine; }
-	void control_engine(uint8_t value) { fields.ControlEngine = value; }
+	uint8_t control_engine() const { return fields.control_engine; }
+	void control_engine(uint8_t value) { fields.control_engine = value; }
 
-	double yaw_rate() const { return fields.YawRate * 0.00012207 + -3.92; }
-	void yaw_rate(double value) { fields.YawRate = (value - -3.92) / 0.00012207; }
+	double yaw_rate() const { return fields.yaw_rate * 0.00012207 + -3.92; }
+	void yaw_rate(double value) { fields.yaw_rate = (value - -3.92) / 0.00012207; }
 
-	double trans_current_gear() const { return fields.TransCurrentGear * 1 + -125; }
-	void trans_current_gear(double value) { fields.TransCurrentGear = (value - -125) / 1; }
+	double trans_current_gear() const { return fields.trans_current_gear * 1 + -125; }
+	void trans_current_gear(double value) { fields.trans_current_gear = (value - -125) / 1; }
 
 	void fillFrameWith(uint8_t value = 0xFF) { memset(data, value, sizeof(data)); }
 #endif
@@ -186,6 +231,8 @@ struct all_xyz_messages_t {
 };
 ```
 *Note: the name of that union is taken from the first input DBC file's name (e.g., `xyz_messages.dbc` → `all_xyz_messages_t`).*
+
+*Portability:* `fields` is a compiler-specific bitfield layout. C and C++ leave the allocation order of bitfields, the storage unit they pack into, and whether a bitfield may cross that unit up to the implementation. This output uses `uint64_t` and `int64_t` bitfields, anonymous padding whose widths follow the DBC start bits, and `__attribute__((packed))` (GCC and Clang). Motorola (`@0`) signals are emitted by walking start bits from the end of the payload. A message that mixes `@0` and `@1` is rejected. The `data[]` / `fields` overlay, and the `all_*` union of every message, follows that compiler's bitfield rules. The portable lookup table is the plain-C database from `dbc_compiler -c_path`: const structs, with the bytes read and written by `j1939_db.c`.
 
 ## License
 This project is licensed under the MIT License -- see [LICENSE](LICENSE) for details.
