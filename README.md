@@ -74,6 +74,15 @@ Short excerpts are committed under `testdata/canboat/`, and the tests that use t
 The full captures (~216 MB) are not committed. Fetch them with
 `scripts/fetch_test_logs.sh`; until you do, those tests skip. See
 [testdata/README.md](testdata/README.md).
+#### Coverage in CI
+
+The Build workflow measures C and C++ coverage for each pull request and its base
+commit with the same toolchain and filters. Any decrease in line, branch, or
+function coverage fails the check, using exact covered/total counts. Line coverage
+must also remain at least 97.8%, and branch coverage at least 93.3%. Pushes to
+`main` enforce those minimums. The job summary shows the comparison; download
+`coverage-reports` from the workflow run for HTML, text, JSON, and test logs.
+
 #### Using can_sandbox
 
 This tool decodes CAN traffic log files in several text formats (ASC, LOG, TRC, OUT, ROS, and Actisense `.raw`/`.all` as written by canboat's actisense-serial) and prints the content to the console. A sample log file is provided.
