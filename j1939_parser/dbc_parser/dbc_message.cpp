@@ -100,6 +100,40 @@ bool Message::little_endian() const {
     return little_endian;
 }
 
+bool Message::validatePortableMultiplexing(std::string &error) const {
+    const Signal *sw = nullptr;
+    bool branches = false;
+    for (const auto &sig : signal_list_) {
+        if (!sig.portableMuxValid()) {
+            error = "unsupported or out-of-range portable mux declaration: " + name_ + "." + sig.name();
+            return false;
+        }
+        if (sig.isMultiplexor()) {
+            if (sig.isMultiplexed() || sw || sig.isSigned() ||
+                sig.bitLength() == 0 || sig.bitLength() > 64) {
+                error = "portable codecs require one unsigned integer mux switch without nesting: " +
+                        name_ + "." + sig.name();
+                return false;
+            }
+            sw = &sig;
+        }
+        branches |= sig.isMultiplexed();
+    }
+    if (branches && !sw) {
+        error = "portable codecs require a switch for multiplex alternatives: " + name_;
+        return false;
+    }
+    if (sw && sw->bitLength() < 16) {
+        for (const auto &sig : signal_list_) {
+            if (sig.isMultiplexed() && sig.muxValue() >= (1u << sw->bitLength())) {
+                error = "mux branch value does not fit switch: " + name_ + "." + sig.name();
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 std::string Message::details() const {
     // /* Standard frame */
     // or
@@ -188,8 +222,8 @@ std::string Message::toUnion() const {
 }
 
 // Parses the provided string and adds it to the signals_ map.
-bool Message::addSignal(const std::string &string) {
-    Signal signal(string);
+bool Message::addSignal(const std::string &string, bool classic_numbers) {
+    Signal signal(string, classic_numbers);
     if (!signal.valid()) {
         return false;
     }

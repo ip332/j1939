@@ -46,6 +46,26 @@ class DbcParser {
     bool load_error_;
     std::string load_error_text_;
 
+    // Legacy parsing retains these declarations, portable emitters reject them.
+    std::string portable_error_;
+
+    // Strict host model export state; legacy backends keep their parsing behavior.
+    struct ModelSource {
+        std::string name, fingerprint, dbc_version;
+        bool has_version = false, has_nodes = false, has_namespace = false;
+        size_t bytes = 0;
+        std::vector<std::string> nodes, namespace_symbols;
+    };
+    struct ModelLocation { std::string source; size_t line = 0; std::string nodes; };
+    bool model_mode_ = false;
+    bool model_failed_ = false;
+    bool model_normalized_ = false;
+    std::map<std::string, ModelSource> model_sources_;
+    std::map<uint32_t, ModelLocation> model_messages_;
+    std::map<std::pair<uint32_t, std::string>, ModelLocation> model_signals_;
+    bool parseModelFile(const std::string &path);
+    bool validateModel(std::string &error) const;
+
     // Parses given line.
     void topLevelParser(const std::string &line);
 
@@ -62,6 +82,15 @@ public:
     // Parses the provided DBC file and stores its content in the raw_messages_ storage
     bool parseFile(const std::string &dbc_path);
 
+    // Host source-tree tools only: inspect parsed definitions before normalization.
+    // No stable C++ ABI or strict-validation guarantee; legacy parse limitations apply.
+    const std::map<uint32_t, Message> &sourceMessages() const { return raw_messages_; }
+
+    // Enable before any parseFile call. Strict single-frame subset for model v1.
+    void setModelExportMode() { model_mode_ = true; }
+    // Emit before removeDuplicates(); failed/legacy parses cannot be exported.
+    bool generateModelOutput(std::ostream &out, std::string &error) const;
+
     // Collapses extended messages that share a PGN and a layout. The generic row is
     // keyed by j1939PgnKey. A layout that is not generic is keyed by j1939SaKey.
     void removeDuplicates();
@@ -73,6 +102,9 @@ public:
 
     // Outputs the raw_messages content into the provided stream as union of a packed structure and a bytes array.
     void generateUnionOutput(std::ofstream *out) const;
+
+    // Portable, standalone per-message C/C++ payload accessors.
+    bool generateAccessorOutput(std::ostream &out, std::string &error) const;
 
     // Writes a plain-C const database (j1939_db.h layout) to the two streams.
     // Uses the messages as parsed, before removeDuplicates(). On failure nothing

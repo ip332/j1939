@@ -109,14 +109,17 @@ uint16_t j1939_messages_by_name(const j1939_db_t *db, const char *name,
                                 uint16_t *indices, uint16_t cap);
 
 /* 0 on success. Integer signals wider than 64 bits fail. A signal that does
-   not fit in `dlc` bytes fails. */
+   not fit in `dlc` bytes fails. Caller supplies at least dlc readable bytes.
+   Does not check multiplex activity; call j1939_signal_active separately.
+   On failure, *raw is unchanged. Metadata must be trusted generated data. */
 int j1939_signal_raw(const uint8_t *payload, uint16_t dlc,
                      const j1939_signal_t *sig, uint64_t *raw);
 
 double j1939_signal_phys(const j1939_signal_t *sig, uint64_t raw);
 
 /* Writes into `payload`, which must be large enough for the signal.
-   Scale 0 fails. Byte strings wider than 64 bits fail. */
+   Scale 0 fails. Byte strings wider than 64 bits fail.
+   Caller validates capacity and finite, representable physical input. */
 int j1939_signal_store(uint8_t *payload, const j1939_signal_t *sig, double phys);
 
 /* Copies min(dst_size - 1, length/8) bytes and NUL-terminates.

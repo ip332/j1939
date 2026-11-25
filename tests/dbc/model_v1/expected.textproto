@@ -1,0 +1,183 @@
+format: "j1939.dbc-model"
+version: 1
+sources {
+  name: "multiplex.dbc"
+  byte_length: 293
+  fnv1a64: "c2696f172bded826"
+}
+sources {
+  name: "single_frame.dbc"
+  byte_length: 504
+  fnv1a64: "b9f22f5acc8c66e5"
+  dbc_version: "model fixture 1"
+  nodes {
+    values: "ECU"
+    values: "Receiver"
+  }
+  namespace_symbols {
+    values: "CM_"
+    values: "VAL_"
+  }
+}
+messages {
+  dbc_id: 100
+  can_id: 100
+  extended: false
+  name: "Mixed"
+  dlc: 8
+  spn: 61444
+  source: "single_frame.dbc"
+  line: 10
+  transmitter: "ECU"
+  signals {
+    name: "Intel"
+    start_bit: 3
+    width: 13
+    byte_order: INTEL
+    is_signed: false
+    scale: "0.5000"
+    offset: "-2"
+    minimum: "0"
+    maximum: "4093"
+    unit: "rev per min"
+    spn: 0
+    source: "single_frame.dbc"
+    line: 11
+    receivers: "Receiver"
+  }
+  signals {
+    name: "Motorola"
+    start_bit: 23
+    width: 12
+    byte_order: MOTOROLA
+    is_signed: true
+    scale: "2.5e-1"
+    offset: "+10"
+    minimum: "-502"
+    maximum: "521.75"
+    unit: "deg"
+    source: "single_frame.dbc"
+    line: 12
+    receivers: "Receiver"
+  }
+  signals {
+    name: "Status"
+    start_bit: 32
+    width: 8
+    byte_order: INTEL
+    is_signed: false
+    scale: "1"
+    offset: "0"
+    minimum: "0"
+    maximum: "255"
+    unit: ""
+    source: "single_frame.dbc"
+    line: 13
+    receivers: "Receiver"
+    enums { raw: 0 label: "Off" }
+    enums { raw: 255 label: "Not available" }
+  }
+}
+messages {
+  dbc_id: 200
+  can_id: 200
+  extended: false
+  name: "Mux"
+  dlc: 8
+  source: "multiplex.dbc"
+  line: 1
+  transmitter: "ECU"
+  signals {
+    name: "Switch"
+    start_bit: 0
+    width: 4
+    byte_order: INTEL
+    is_signed: false
+    scale: "1"
+    offset: "0"
+    minimum: "0"
+    maximum: "15"
+    unit: ""
+    source: "multiplex.dbc"
+    line: 2
+    receivers: "Receiver"
+    multiplex { role: SWITCH }
+    enums { raw: 0 label: "Signed mode" }
+    enums { raw: 1 label: "Unsigned mode" }
+  }
+  signals {
+    name: "Unsigned"
+    start_bit: 8
+    width: 12
+    byte_order: INTEL
+    is_signed: false
+    scale: "1"
+    offset: "0"
+    minimum: "0"
+    maximum: "4095"
+    unit: ""
+    source: "multiplex.dbc"
+    line: 4
+    receivers: "Receiver"
+    multiplex { role: BRANCH switch_name: "Switch" value: 1 }
+  }
+  signals {
+    name: "Signed"
+    start_bit: 15
+    width: 12
+    byte_order: MOTOROLA
+    is_signed: true
+    scale: "0.25"
+    offset: "10"
+    minimum: "-502"
+    maximum: "521.75"
+    unit: "degrees C"
+    source: "multiplex.dbc"
+    line: 3
+    receivers: "Receiver"
+    multiplex { role: BRANCH switch_name: "Switch" value: 0 }
+  }
+  signals {
+    name: "Always"
+    start_bit: 32
+    width: 8
+    byte_order: INTEL
+    is_signed: false
+    scale: "1"
+    offset: "0"
+    minimum: "0"
+    maximum: "255"
+    unit: ""
+    source: "multiplex.dbc"
+    line: 5
+    receivers: "Receiver"
+  }
+}
+messages {
+  dbc_id: 2565866513
+  can_id: 418382865
+  extended: true
+  name: "EEC1_11"
+  dlc: 8
+  pgn: 61444
+  source_address: 17
+  j1939_default: false
+  source: "single_frame.dbc"
+  line: 19
+  transmitter: "ECU"
+  signals {
+    name: "Speed"
+    start_bit: 24
+    width: 16
+    byte_order: INTEL
+    is_signed: false
+    scale: "0.125"
+    offset: "0"
+    minimum: "0"
+    maximum: "8031.875"
+    unit: "rpm"
+    source: "single_frame.dbc"
+    line: 20
+    receivers: "Receiver"
+  }
+}

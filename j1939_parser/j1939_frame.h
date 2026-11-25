@@ -155,6 +155,9 @@ struct SPN {
     double max_;
     // Enum values are the raw wire pattern, so the key is wide enough for any integer signal.
     std::map<uint64_t, std::string> enum_names_;
+    bool multiplexor_ = false;
+    bool multiplexed_ = false;
+    uint16_t mux_value_ = 0;
 
     // Return given value in human-readable format.
     std::string toString(uint64_t value) const;

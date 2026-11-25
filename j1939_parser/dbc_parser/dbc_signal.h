@@ -45,7 +45,9 @@ class Signal {
 
     // J1939 SPN attribute (BA_ "SPN"). 0 when the DBC does not assign one.
     uint32_t spn_ = 0;
+    bool has_spn_ = false;
     // Multiplex switch value. Meaningful when multiplexed_ is set.
+    bool portable_mux_invalid_ = false;
     uint16_t mux_value_ = 0;
     bool multiplexor_ = false;
     bool multiplexed_ = false;
@@ -63,7 +65,7 @@ class Signal {
     std::string fieldType() const;
 public:
     // Parses SG_ record from a DBC file and set up validity flag:
-    Signal(const std::string &line);
+    Signal(const std::string &line, bool classic_numbers = false);
 
     bool valid() const { return valid_; }
 
@@ -80,7 +82,14 @@ public:
 
     uint32_t spn() const { return spn_; }
 
-    void setSpn(uint32_t spn) { spn_ = spn; }
+    void setSpn(uint32_t spn) { spn_ = spn; has_spn_ = true; }
+
+    bool hasSpn() const { return has_spn_; }
+
+    // Quoted DBC unit text. Strict export excludes escapes in DBC strings.
+    const std::string &unitsLiteral() const { return units_; }
+
+    bool portableMuxValid() const { return !portable_mux_invalid_; }
 
     uint16_t muxValue() const { return mux_value_; }
 

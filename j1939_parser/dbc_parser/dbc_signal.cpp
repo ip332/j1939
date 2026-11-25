@@ -7,6 +7,8 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
+#include <locale>
+#include <stdexcept>
 #include "dbc_signal.h"
 
 // A helper function to split a string onto fields by a delimiter
@@ -56,7 +58,17 @@ std::string toSnakeCase(const std::string &name) {
     return std::string(result, size);
 }
 
-Signal::Signal(const std::string &line) : valid_(false) {
+namespace {
+double dbcNumber(const std::string &text) {
+    std::istringstream input(text);
+    input.imbue(std::locale::classic());
+    double value;
+    if (!(input >> value)) throw std::invalid_argument("invalid DBC number: " + text);
+    return value;
+}
+}
+
+Signal::Signal(const std::string &line, bool classic_numbers) : valid_(false) {
     // Examlpe of a record:
     //    SG_ pHeatdGripDwnSwSts : 52|2@1+ (1,0) [0|3] "status" Vector__XXX
     // Indices:
@@ -75,6 +87,18 @@ Signal::Signal(const std::string &line) : valid_(false) {
         // Multiplex marker: "M" (the switch), "m16" (shown when the switch is 16),
         // or "m16M" (extended multiplex: both a switch and a switched signal).
         const std::string &mux = fields[3];
+        // Retain unsupported-token state before permissive legacy parsing can
+        // drop or wrap it. Do not change the legacy interpretation here.
+        if (mux != "M") {
+            unsigned checked = 0;
+            bool supported = mux.size() > 1 && mux[0] == 'm';
+            for (size_t j = 1; j < mux.size(); ++j) {
+                const unsigned digit = static_cast<unsigned char>(mux[j]) - '0';
+                if (digit > 9 || checked > (65535u - digit) / 10u) { supported = false; break; }
+                checked = checked * 10u + digit;
+            }
+            portable_mux_invalid_ = !supported;
+        }
         if (mux == "M") {
             multiplexor_ = true;
         } else if (!mux.empty() && mux[0] == 'm') {
@@ -110,17 +134,21 @@ Signal::Signal(const std::string &line) : valid_(false) {
     scale_literal_ = scale_offset[0];
     offset_literal_ = scale_offset[1];
     // Keep the double from the decimal text. A float factor such as 1e-7 is already rounded.
-    scale_d_ = std::stod(scale_offset[0]);
-    offset_d_ = std::stod(scale_offset[1]);
+    scale_d_ = (classic_numbers ? dbcNumber(scale_offset[0]) : std::stod(scale_offset[0]));
+    offset_d_ = (classic_numbers ? dbcNumber(scale_offset[1]) : std::stod(scale_offset[1]));
 
     std::string pair2 = fields[fmt_idx + 2].substr(1, fields[fmt_idx + 2].length() - 2);
     std::vector <std::string> min_max = splitString(pair2, '|');
     min_literal_ = min_max[0];
     max_literal_ = min_max[1];
-    min_ = std::stod(min_max[0]);
-    max_ = std::stod(min_max[1]);
+    min_ = (classic_numbers ? dbcNumber(min_max[0]) : std::stod(min_max[0]));
+    max_ = (classic_numbers ? dbcNumber(min_max[1]) : std::stod(min_max[1]));
 
-    units_ = fields[fmt_idx + 3];
+    // Units may contain spaces. Keep the complete quoted literal, not a word.
+    const auto unit_begin = line.find('"');
+    const auto unit_end = line.find('"', unit_begin + 1);
+    units_ = unit_begin != std::string::npos && unit_end != std::string::npos
+        ? line.substr(unit_begin, unit_end - unit_begin + 1) : fields[fmt_idx + 3];
     valid_ = true;
 }
 
@@ -152,7 +180,12 @@ std::string Signal::toSpnString() const {
             length += one_value.length();
         }
     }
-    out << "}},\n";
+    out << "}";
+    if (multiplexor_ || multiplexed_) {
+        out << ", " << (multiplexor_ ? "true" : "false")
+            << ", " << (multiplexed_ ? "true" : "false") << ", " << mux_value_;
+    }
+    out << "},\n";
     return out.str();
 };
 
@@ -263,6 +296,11 @@ bool Signal::sameLayout(const Signal &other) const {
 SPN Signal::toSpn() const {
     SPN spn;
     spn.name_ = name_.c_str();
+    spn.min_ = min_;
+    spn.max_ = max_;
+    spn.multiplexor_ = multiplexor_;
+    spn.multiplexed_ = multiplexed_;
+    spn.mux_value_ = mux_value_;
     spn.length_ = length_;
     spn.offset_ = offset_d_;
     spn.scalar_ = scale_d_;

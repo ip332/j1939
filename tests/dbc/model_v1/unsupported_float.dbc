@@ -1,0 +1,4 @@
+BO_ 100 Floating: 8 ECU
+ SG_ Value : 0|32@1+ (1,0) [0|1] "" Receiver
+
+SIG_VALTYPE_ 100 Value : 1;

@@ -11,6 +11,7 @@
 #include <sstream>
 
 bool DbcParser::parseFile(const std::string &dbc_path) {
+    if (model_mode_) return parseModelFile(dbc_path);
     top_level_ = true;
     load_error_ = false;
     load_error_text_.clear();
@@ -48,7 +49,7 @@ bool DbcParser::parseFile(const std::string &dbc_path) {
     }
     std::string line;
     while (std::getline(infile, line)) {
-        if (line[line.size() - 1] == '\r') {
+        if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
 
@@ -98,6 +99,7 @@ void DbcParser::storeLastMessage() {
     }
 }
 void DbcParser::removeDuplicates() {
+    model_normalized_ = true;
     // Extended identity is the PGN, plus the source address only when that PGN has
     // more than one layout. Priority is ignored. One layout becomes the generic row.
     // Several layouts stay source-address specific, and a generic row is added only
@@ -248,6 +250,9 @@ void DbcParser::topLevelParser(const std::string &line) {
         }
         last_message_->setDbcName(dbc_name_);
         top_level_ = false;
+    } else if (line.compare(0, 12, "SG_MUL_VAL_ ") == 0 ||
+               line.compare(0, 12, "SIG_VALTYPE_") == 0) {
+        if (portable_error_.empty()) portable_error_ = "unsupported DBC declaration: " + line;
     } else if (type5 == "VAL_ ") {
         // Split line onto fields.
         // Since this record includes string literals in double qoutes, first split string using them.
