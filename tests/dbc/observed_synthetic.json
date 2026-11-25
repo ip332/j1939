@@ -1,0 +1,225 @@
+{
+  "origin": "Hand-authored synthetic vectors; no captured data; same project license.",
+  "frames": [
+    {
+      "id": 419365121,
+      "pgn": 65281,
+      "sa": 1,
+      "da": 255,
+      "payload": "a791abcf002a00ff",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 0
+    },
+    {
+      "id": 419365121,
+      "pgn": 65281,
+      "sa": 1,
+      "da": 255,
+      "payload": "a791abcf01ff0000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 1
+    },
+    {
+      "id": 419365121,
+      "pgn": 65281,
+      "sa": 1,
+      "da": 255,
+      "payload": "a791abcf022a0000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 2
+    },
+    {
+      "id": 419365121,
+      "pgn": 65281,
+      "sa": 1,
+      "da": 255,
+      "payload": "0000000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 3
+    },
+    {
+      "id": 419365121,
+      "pgn": 65281,
+      "sa": 1,
+      "da": 255,
+      "payload": "ffffffffffffffff",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 4
+    },
+    {
+      "id": 419365377,
+      "pgn": 65282,
+      "sa": 1,
+      "da": 255,
+      "payload": "0000000000000080",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 5
+    },
+    {
+      "id": 419365377,
+      "pgn": 65282,
+      "sa": 1,
+      "da": 255,
+      "payload": "ffffffffffffffff",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 6
+    },
+    {
+      "id": 419365633,
+      "pgn": 65283,
+      "sa": 1,
+      "da": 255,
+      "payload": "ffffffffffffffff",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 7
+    },
+    {
+      "id": 419365899,
+      "pgn": 65284,
+      "sa": 11,
+      "da": 255,
+      "payload": "2a00000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 8
+    },
+    {
+      "id": 419365950,
+      "pgn": 65284,
+      "sa": 62,
+      "da": 255,
+      "payload": "2a00000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 9
+    },
+    {
+      "id": 419365921,
+      "pgn": 65284,
+      "sa": 33,
+      "da": 255,
+      "payload": "2a00000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 10
+    },
+    {
+      "id": 419367169,
+      "pgn": 65289,
+      "sa": 1,
+      "da": 255,
+      "payload": "0000000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 11
+    },
+    {
+      "id": 418184961,
+      "pgn": 60416,
+      "sa": 1,
+      "da": 255,
+      "payload": "20090002ff04f000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 12
+    },
+    {
+      "id": 418119425,
+      "pgn": 60160,
+      "sa": 1,
+      "da": 255,
+      "payload": "0100000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 13
+    },
+    {
+      "id": 419365121,
+      "pgn": 65281,
+      "sa": 1,
+      "da": 255,
+      "payload": "a791abcf",
+      "dlc": 4,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 14
+    },
+    {
+      "id": 419365121,
+      "pgn": 65281,
+      "sa": 1,
+      "da": 255,
+      "payload": "000000000000000000",
+      "dlc": 9,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 15
+    },
+    {
+      "id": 417999402,
+      "pgn": 59904,
+      "sa": 42,
+      "da": 42,
+      "payload": "04f000",
+      "dlc": 3,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 16
+    },
+    {
+      "id": 418054137,
+      "pgn": 59904,
+      "sa": 249,
+      "da": 255,
+      "payload": "04f000",
+      "dlc": 3,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 17
+    },
+    {
+      "id": 419365951,
+      "pgn": 65284,
+      "sa": 63,
+      "da": 255,
+      "payload": "2a00000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 18
+    },
+    {
+      "id": 402653187,
+      "pgn": 0,
+      "sa": 3,
+      "da": 0,
+      "payload": "2a00000000000000",
+      "dlc": 8,
+      "extended": true,
+      "time_ns": null,
+      "ordinal": 19
+    }
+  ]
+}
