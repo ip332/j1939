@@ -30,9 +30,17 @@ inline uint32_t j1939SaKey(uint32_t pgn, uint8_t sa) {
     return 0x40000000u | ((pgn & 0x3FFFFu) << 8) | sa;
 }
 
-// Set rightmost "length" bits to 1 and return given mask.
+// Lowest `length` bits set. Length 0 is an empty field. Length 64 is every bit.
+// A longer integer signal is refused: the mask is 0, and read_bits/write_bits do nothing.
+// The shift is unsigned long long so lengths 32..63 are defined on a 32-bit target.
 inline uint64_t make_mask(size_t length) {
-    return length == 64 ? 0xFFFFFFFFFFFFFFFF : (1ul << length) - 1ul;
+    if (length == 0 || length > 64) {
+        return 0;
+    }
+    if (length == 64) {
+        return ~0ull;
+    }
+    return (1ull << length) - 1ull;
 }
 
 // This union is used to simplify bits packing/unpacking to/from a CAN frame.
@@ -119,12 +127,12 @@ struct J1939_frame {
     };
 
     // Copies all bytes which stores 'length' bits starting from 'start_bit'
-    void copyUsedTo(union64_t *buf, uint16_t start_bit, uint8_t length, bool little_endian) const;
+    void copyUsedTo(union64_t *buf, uint16_t start_bit, uint16_t length, bool little_endian) const;
     // Reverse operation to replace used bytes in the frame
-    void copyUsedFrom(const union64_t &buf, uint16_t start_bit, uint8_t  length, bool little_endian);
+    void copyUsedFrom(const union64_t &buf, uint16_t start_bit, uint16_t length, bool little_endian);
 
-    uint64_t read_bits(uint16_t start_bit, uint8_t length, bool little_endian) const;
-    void write_bits(uint64_t value, uint16_t start_bit, uint8_t length, bool little_endian);
+    uint64_t read_bits(uint16_t start_bit, uint16_t length, bool little_endian) const;
+    void write_bits(uint64_t value, uint16_t start_bit, uint16_t length, bool little_endian);
 };
 
 // This class defines SPN format produced by the DBC compiler in a lookup table in a read-only mode
@@ -134,19 +142,19 @@ struct SPN {
     std::string name_;
     // Start bit in the local_frame.
     uint16_t start_bit_;
-    // Number of bits reserved for this signal.
-    uint8_t length_;
+    // Number of bits reserved for this signal. Wider than 64 only for a byte string.
+    uint16_t length_;
     // Indicates if the MSB stores sign bit or not.
     bool signedness_;
     // Most of the signals are encoded in little-endian format but not all.
     bool little_endian_;
-    // Scalar and offset will be used to convert the raw value into a human readable value (mph, degree, etc.)
-    float scalar_;
-    float offset_;
+    // Scalar and offset convert the raw value into a physical value (mph, degree, etc.).
+    double scalar_;
+    double offset_;
     double min_;
     double max_;
-    // List all enums values and their meaning.
-    std::map<uint32_t, std::string> enum_names_;
+    // Enum values are the raw wire pattern, so the key is wide enough for any integer signal.
+    std::map<uint64_t, std::string> enum_names_;
     bool multiplexor_ = false;
     bool multiplexed_ = false;
     uint16_t mux_value_ = 0;
@@ -166,8 +174,8 @@ struct SPN {
 struct PGN {
     // Name
     std::string name_;
-    // Expected number of bytes in the payload.
-    uint8_t dlc_;
+    // Expected number of bytes in the payload. A transport-protocol frame can exceed 255.
+    uint16_t dlc_;
     // All signals (order is not guaranteed)
     std::vector<SPN> signals_;
 

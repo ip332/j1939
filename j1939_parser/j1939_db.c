@@ -192,7 +192,9 @@ static void write_bits(uint8_t *payload, uint64_t value, uint16_t start_bit, uin
 
 static int64_t sign_extend(uint64_t raw, unsigned length) {
     uint64_t sign = (uint64_t)1 << (length - 1u);
-    return (int64_t)((raw ^ sign) - sign);
+    /* Convert only representable positive values; avoid unsigned-to-signed
+       conversion outside INT64_MAX, including the 64-bit minimum. */
+    return (raw & sign) ? -1 - (int64_t)(~raw & bit_mask(length)) : (int64_t)raw;
 }
 
 void j1939_id_unpack(uint32_t can_id, int extended,

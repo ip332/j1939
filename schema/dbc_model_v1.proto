@@ -1,0 +1,66 @@
+// Host interchange model. Text Format output is specified in docs/dbc-model-v1.md.
+// v1 is frozen: incompatible or additive field changes require a new model version
+// and package, because strict Text Format readers reject unknown field names.
+syntax = "proto2";
+package j1939.dbc.model.v1;
+
+message Model {
+  required string format = 1; // "j1939.dbc-model"
+  required uint32 version = 2; // 1
+  repeated Source sources = 3;
+  repeated Message messages = 4;
+}
+message StringList { repeated string values = 1; }
+message Source {
+  required string name = 1; // unique logical basename, no absolute checkout path
+  required uint64 byte_length = 2;
+  required string fnv1a64 = 3; // lowercase 16 hex digits; not a security digest
+  optional string dbc_version = 4; // VERSION literal, absent vs explicit ""
+  optional StringList nodes = 5; // BU_: header; empty message means explicit empty
+  optional StringList namespace_symbols = 6; // NS_: header; capability names only
+}
+message Message {
+  required uint32 dbc_id = 1; // original ID, includes DBC extended flag if present
+  required uint32 can_id = 2; // original ID with DBC extended flag removed
+  required bool extended = 3;
+  required string name = 4; // original DBC name, never collapsed by PGN
+  required uint32 dlc = 5;
+  optional uint32 pgn = 6; // derived using J1939 PDU1/PDU2 rules; extended only
+  optional uint32 source_address = 7; // ID low byte; extended only
+  optional uint32 spn = 8; // BA_ "SPN" BO_, preserves explicit 0
+  optional bool j1939_default = 9; // BA_ "J1939Default", preserves explicit false
+  required string source = 10; // Source.name
+  required uint64 line = 11; // 1-based BO_ declaration line
+  required string transmitter = 12;
+  repeated Signal signals = 13;
+}
+message Signal {
+  enum ByteOrder { INTEL = 0; MOTOROLA = 1; }
+  required string name = 1;
+  required uint32 start_bit = 2; // original DBC numbering (Motorola sawtooth MSB)
+  required uint32 width = 3;
+  required ByteOrder byte_order = 4;
+  required bool is_signed = 5;
+  // Exact decimal source tokens, not binary float formatting.
+  required string scale = 6;
+  required string offset = 7;
+  required string minimum = 8;
+  required string maximum = 9;
+  required string unit = 10; // explicit "" means DBC specifies no unit text
+  optional uint32 spn = 11;
+  required string source = 12; // Source.name
+  required uint64 line = 13; // 1-based SG_ declaration line
+  repeated string receivers = 14;
+  optional Multiplex multiplex = 15; // absent means unconditional signal
+  repeated EnumValue enums = 16;
+}
+message Multiplex {
+  enum Role { SWITCH = 0; BRANCH = 1; }
+  required Role role = 1;
+  optional string switch_name = 2; // BRANCH only; reference inside containing message
+  optional uint32 value = 3; // BRANCH only; raw unsigned switch value, <=65535
+}
+message EnumValue {
+  required uint64 raw = 1; // raw wire pattern, not a signed/physical value
+  required string label = 2;
+}

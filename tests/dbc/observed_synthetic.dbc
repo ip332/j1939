@@ -1,0 +1,32 @@
+BO_ 2566848769 SyntheticBits: 8 ECU
+ SG_ Intel : 3|13@1+ (0.5,-2) [0|4093] "rpm" Receiver
+ SG_ Motorola : 23|12@0- (0.25,10) [-502|521.75] "deg" Receiver
+ SG_ Selector M : 32|4@1+ (1,0) [0|15] "" Receiver
+ SG_ A m0 : 40|8@1+ (1,0) [0|255] "" Receiver
+ SG_ B m1 : 40|8@1- (2,-3) [-259|251] "count" Receiver
+ SG_ Status : 56|8@1+ (1,0) [0|255] "" Receiver
+
+BO_ 2566849025 SyntheticSigned64: 8 ECU
+ SG_ Value : 0|64@1- (1,0) [-1|1] "" Receiver
+
+BO_ 2566849281 SyntheticUnsigned64: 8 ECU
+ SG_ Value : 0|64@1+ (1,0) [0|1] "" Receiver
+
+BO_ 2566849547 SyntheticSourceA: 8 ECU
+ SG_ Value : 0|8@1+ (1,0) [0|255] "unit A" Receiver
+
+BO_ 2566849598 SyntheticSourceB: 8 ECU
+ SG_ Value : 0|8@1+ (2,0) [0|510] "unit B" Receiver
+
+VAL_ 2566848769 Status 0 "Zero" 255 "Synthetic marker" ;
+BA_ "SPN" SG_ 2566848769 Intel 0;
+VAL_ 2566849281 Value 18446744073709551615 "Full width synthetic marker" ;
+
+BO_ 2565472298 SyntheticRequest: 3 ECU
+ SG_ RequestedPgn : 0|24@1+ (1,0) [0|16777215] "" Receiver
+
+BO_ 2566849599 SyntheticSourceC: 8 ECU
+ SG_ Value : 0|8@1+ (1,0) [0|255] "unit B" Receiver
+
+BO_ 2550136835 SyntheticPgnZero: 8 ECU
+ SG_ Value : 0|8@1+ (1,0) [0|255] "" Receiver

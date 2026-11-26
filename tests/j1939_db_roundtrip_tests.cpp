@@ -89,11 +89,8 @@ bool compileDatabase(const std::string &dir, const std::string &c_text, const st
     return true;
 }
 
-uint64_t fieldMask(uint8_t length) {
-    if (length >= 64) {
-        return ~0ull;
-    }
-    return (1ull << length) - 1ull;
+uint64_t fieldMask(uint16_t length) {
+    return make_mask(length);
 }
 
 void expectSameRaw(const j1939_db_t *db, const std::map<uint32_t, PGN> &cpp_db, uint32_t can_id, const PGN &pgn,

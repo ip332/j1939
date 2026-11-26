@@ -1,0 +1,7 @@
+BO_ 200 Mux: 8 ECU
+ SG_ Switch M : 0|4@1+ (1,0) [0|15] "" Receiver
+ SG_ Signed m0 : 15|12@0- (0.25,10) [-502|521.75] "degrees C" Receiver
+ SG_ Unsigned m1 : 8|12@1+ (1,0) [0|4095] "" Receiver
+ SG_ Always : 32|8@1+ (1,0) [0|255] "" Receiver
+
+VAL_ 200 Switch 0 "Signed mode" 1 "Unsigned mode" ;

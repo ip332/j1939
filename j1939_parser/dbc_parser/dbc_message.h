@@ -22,17 +22,21 @@ class Message {
     uint8_t sa_;
     // Number of bytes in the payload.
     uint16_t dlc_;
-    // All signals, ordered by the start bit. The first signal at a start bit wins;
-    // a multiplex alternative that shares that bit is kept only in signal_list_.
+    // Signals keyed by start bit. The packed union cannot overlay two signals, so the
+    // first one at a start bit stays here. The PGN table uses signal_list_ instead.
     std::map <uint16_t, Signal> signals_;
     // Every signal, including multiplex alternatives that share a start bit.
     std::vector<Signal> signal_list_;
+    // Set when a non-multiplexed signal repeats a start bit, or a VAL_ value does not fit.
+    std::string signal_error_;
     // We also need ability to find a signal by name.
     std::map <std::string, uint16_t> start_bit_by_name_;
     // BA_ "SPN" BO_. 0 when the message has no SPN attribute.
     uint32_t message_spn_ = 0;
+    bool has_message_spn_ = false;
     // BA_ "J1939Default" BO_ <id> 1. Marks the generic layout when one PGN has several.
     bool default_mark_ = false;
+    bool has_default_mark_ = false;
     // The message name in a lower case, underscore separated format (aka "snake case")
     std::string snake_name_;
     // Source file name for debugging purposes.
@@ -72,13 +76,21 @@ public:
     // Every signal in parse order, including ones that share a start bit.
     const std::vector<Signal> &allSignals() const { return signal_list_; }
 
+    bool hasSignalError() const { return !signal_error_.empty(); }
+
+    const std::string &signalError() const { return signal_error_; }
+
     Signal *findSignal(const std::string &name);
 
-    void setMessageSpn(uint32_t spn) { message_spn_ = spn; }
+    void setMessageSpn(uint32_t spn) { message_spn_ = spn; has_message_spn_ = true; }
+
+    bool hasMessageSpn() const { return has_message_spn_; }
 
     uint32_t messageSpn() const { return message_spn_; }
 
-    void markDefault() { default_mark_ = true; }
+    void markDefault(bool value = true) { default_mark_ = value; has_default_mark_ = true; }
+
+    bool hasDefaultMark() const { return has_default_mark_; }
 
     bool defaultMark() const { return default_mark_; }
 
@@ -94,10 +106,15 @@ public:
     // Prints out the message as a union of a packed structure and a bytes buffer.
     std::string toUnion() const;
 
+    const std::vector<Signal> &signalList() const { return signal_list_; }
+
+    // Common portable-codec subset: one unsigned integer switch, no nesting.
+    bool validatePortableMultiplexing(std::string &error) const;
+
     // Prints out a comment for PGN format to show CAN ID fields.
     std::string details() const;
     // Parses the provided string and adds it to the signals_ map.
-    bool addSignal(const std::string &string);
+    bool addSignal(const std::string &string, bool classic_numbers = false);
 
     // Passes the given vector to the signal which name is stored under index == 2.
     bool addValues(const std::vector <std::string> &fields);

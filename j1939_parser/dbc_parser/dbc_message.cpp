@@ -30,6 +30,11 @@ std::vector<Signal> signalsInPgnOrder(const std::vector<Signal> &signals) {
     return ordered;
 }
 
+bool sharesStartBitAsMultiplex(const Signal &signal, const Signal &kept) {
+    return signal.isMultiplexed() || signal.isMultiplexor() ||
+           kept.isMultiplexed() || kept.isMultiplexor();
+}
+
 }  // namespace
 
 Message::Message(const std::string &line) {
@@ -95,6 +100,40 @@ bool Message::little_endian() const {
     return little_endian;
 }
 
+bool Message::validatePortableMultiplexing(std::string &error) const {
+    const Signal *sw = nullptr;
+    bool branches = false;
+    for (const auto &sig : signal_list_) {
+        if (!sig.portableMuxValid()) {
+            error = "unsupported or out-of-range portable mux declaration: " + name_ + "." + sig.name();
+            return false;
+        }
+        if (sig.isMultiplexor()) {
+            if (sig.isMultiplexed() || sw || sig.isSigned() ||
+                sig.bitLength() == 0 || sig.bitLength() > 64) {
+                error = "portable codecs require one unsigned integer mux switch without nesting: " +
+                        name_ + "." + sig.name();
+                return false;
+            }
+            sw = &sig;
+        }
+        branches |= sig.isMultiplexed();
+    }
+    if (branches && !sw) {
+        error = "portable codecs require a switch for multiplex alternatives: " + name_;
+        return false;
+    }
+    if (sw && sw->bitLength() < 16) {
+        for (const auto &sig : signal_list_) {
+            if (sig.isMultiplexed() && sig.muxValue() >= (1u << sw->bitLength())) {
+                error = "mux branch value does not fit switch: " + name_ + "." + sig.name();
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 std::string Message::details() const {
     // /* Standard frame */
     // or
@@ -125,7 +164,7 @@ std::string Message::toPgnString(bool generic_name) const {
         msg_name = name_.substr(0, pos);
     }
     out << "{ \"" << msg_name << "\", " << dlc_ << ", {\n";
-    for (const auto &signal : signalsInPgnOrder(signal_list_)) {
+    for (const auto & signal : signalsInPgnOrder(signal_list_)) {
         out << signal.toSpnString();
     }
     out << "\t}}";
@@ -183,17 +222,23 @@ std::string Message::toUnion() const {
 }
 
 // Parses the provided string and adds it to the signals_ map.
-bool Message::addSignal(const std::string &string) {
-    Signal signal(string);
-    if (signal.valid()) {
-        signal_list_.push_back(signal);
-        // emplace keeps the first signal when two multiplex values share a start bit.
-        // The PGN and union outputs still see that first signal; the C database sees signal_list_.
-        signals_.emplace(signal.startBit(), signal);
-        start_bit_by_name_.emplace(signal.name(), signal.startBit());
-        return true;
+bool Message::addSignal(const std::string &string, bool classic_numbers) {
+    Signal signal(string, classic_numbers);
+    if (!signal.valid()) {
+        return false;
     }
-    return false;
+    auto inserted = signals_.emplace(signal.startBit(), signal);
+    if (!inserted.second && !sharesStartBitAsMultiplex(signal, inserted.first->second)) {
+        // A multiplex alternative may share the start bit. Two plain signals may not:
+        // the union keeps only the first, so dropping the second would be silent.
+        signal_error_ = "two signals share start bit " + std::to_string(signal.startBit()) +
+                        " in message " + name_ + ": " + inserted.first->second.name() +
+                        " and " + signal.name();
+        return false;
+    }
+    signal_list_.push_back(signal);
+    start_bit_by_name_.emplace(signal.name(), signal.startBit());
+    return true;
 }
 
 Signal *Message::findSignal(const std::string &name) {
@@ -214,11 +259,17 @@ bool Message::addValues(const std::vector <std::string> &fields) {
     assertm(start_bit != start_bit_by_name_.end(), "Unexpected signal name in  VAL_ record");
     Signal *signal = findSignal(fields[2]);
     assertm(signal != nullptr, "Unexpected signal name in VAL_ record");
-    signal->addValue(fields);
+    if (!signal->addValue(fields)) {
+        signal_error_ = signal->valueError();
+        return false;
+    }
     auto it = signals_.find(start_bit->second);
     assertm(it != signals_.end(), "Unexpected start bit while processing VAL_ record");
     if (it->second.name() == fields[2]) {
-        it->second.addValue(fields);
+        if (!it->second.addValue(fields)) {
+            signal_error_ = it->second.valueError();
+            return false;
+        }
     }
     return true;
 }
@@ -227,7 +278,9 @@ PGN Message::toPgn() const {
     PGN pgn;
     pgn.name_ = name_.c_str();
     pgn.dlc_ = dlc_;
-    for (const auto &signal : signalsInPgnOrder(signal_list_)) {
+    // Every multiplex alternative. The union above stays on signals_ because a packed
+    // bitfield cannot overlay two signals at one start bit.
+    for (const auto & signal : signalsInPgnOrder(signal_list_)) {
         pgn.signals_.push_back(signal.toSpn());
     }
     return pgn;

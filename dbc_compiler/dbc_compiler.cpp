@@ -27,6 +27,7 @@ int main(int argc, const char* argv[]) {
     std::string union_path;
     std::string accessor_path;
     std::string c_path;
+    std::string model_path;
     std::string var_name;
     bool no_strings = false;
 
@@ -36,22 +37,43 @@ int main(int argc, const char* argv[]) {
     options.addOption("-union_path", "Full path of the output file to store the DBC content in the 'union' format.", &union_path);
     options.addOption("-accessor_path", "Standalone portable C/C++ payload accessors (header).", &accessor_path);
     options.addOption("-c_path", "Full path of the generated plain-C database (.c). A matching .h is written beside it.", &c_path);
+    options.addOption("-model_path", "Strict version-1 protobuf Text Format DBC model for host-side consumers (exclusive output mode).", &model_path);
     options.addOption("-no-strings", "Omit signal and message names from the plain-C database.", &no_strings);
 
     if (!options.processArgs(argc, argv)) {
         return 1;
     }
 
-    if (inputs.size() == 0 || (union_path.empty() && pgn_path.empty() && c_path.empty() && accessor_path.empty())) {
+    if (inputs.size() == 0 || (union_path.empty() && pgn_path.empty() && c_path.empty() && accessor_path.empty() && model_path.empty())) {
         printf( "Usage: dbc_compiler <options>\n");
         printf( "   where <options> could be:\n");
         options.print();
         return 2;
     }
-    // Open the output file(s).
-    std::unique_ptr<std::ofstream> pgn_file = getFile(pgn_path);
-    std::unique_ptr<std::ofstream> union_file = getFile(union_path);
-
+    if (!model_path.empty()) {
+        if (!pgn_path.empty() || !union_path.empty() || !c_path.empty() || !accessor_path.empty() || no_strings || !var_name.empty()) {
+            std::cerr << "-model_path cannot be combined with other outputs, -name or -no-strings" << std::endl;
+            return 2;
+        }
+        DbcParser model;
+        model.setModelExportMode();
+        for (const auto &input : inputs) if (!model.parseFile(input)) return 4;
+        std::ostringstream text;
+        std::string error;
+        if (!model.generateModelOutput(text, error)) {
+            std::cerr << error << std::endl;
+            return 4;
+        }
+        // Validate all inputs before opening/replacing an existing output.
+        std::ofstream output(model_path, std::ios::binary);
+        output << text.str();
+        output.close();
+        if (!output) {
+            std::cerr << "Error writing model output " << model_path << std::endl;
+            return 2;
+        }
+        return 0;
+    }
     // Load all input files into RAM
     DbcParser parser;
     for (auto in : inputs) {
@@ -59,43 +81,51 @@ int main(int argc, const char* argv[]) {
             return -3;
         }
     }
+    // Validate every requested portable artifact before opening any output.
+    std::ostringstream c_text, h_text, accessor_text;
+    std::string header_path;
     // The C database has its own collapse rule and must see every source address,
     // so it is emitted before removeDuplicates() rewrites the message keys.
     if (!c_path.empty()) {
-        std::string header_path = c_path;
+        header_path = c_path;
         auto dot = header_path.rfind('.');
         if (dot == std::string::npos) {
             header_path += ".h";
         } else {
             header_path.replace(dot, std::string::npos, ".h");
         }
-        std::ostringstream c_text;
-        std::ostringstream h_text;
         std::string error;
         if (!parser.generateCOutput(c_text, h_text, no_strings, error)) {
             std::cerr << error << std::endl;
             return 4;
         }
-        std::ofstream c_file(c_path.c_str());
-        std::ofstream h_file(header_path.c_str());
-        if (!c_file.is_open() || !h_file.is_open()) {
-            std::cerr << "Error opening C database output " << c_path << std::endl;
-            return 2;
-        }
-        c_file << c_text.str();
-        h_file << h_text.str();
     }
-
     if (!accessor_path.empty()) {
-        std::ostringstream text;
         std::string error;
-        if (!parser.generateAccessorOutput(text, error)) {
+        if (!parser.generateAccessorOutput(accessor_text, error)) {
             std::cerr << error << std::endl;
             return 4;
         }
-        auto file = getFile(accessor_path);
-        *file << text.str();
     }
+    // Validation succeeded. Writes are checked, but are not a multi-file atomic
+    // transaction: an I/O failure can still leave partially replaced outputs.
+    if (!c_path.empty()) {
+        auto c_file = getFile(c_path), h_file = getFile(header_path);
+        *c_file << c_text.str(); *h_file << h_text.str();
+        c_file->close(); h_file->close();
+        if (!*c_file || !*h_file) {
+            std::cerr << "Error writing C database output " << c_path << std::endl;
+            return 2;
+        }
+    }
+    if (!accessor_path.empty()) {
+        auto file = getFile(accessor_path);
+        *file << accessor_text.str();
+        file->close();
+        if (!*file) { std::cerr << "Error writing accessor output " << accessor_path << std::endl; return 2; }
+    }
+    std::unique_ptr<std::ofstream> pgn_file = getFile(pgn_path);
+    std::unique_ptr<std::ofstream> union_file = getFile(union_path);
 
     // TODO: add option to disable the following step.
     parser.removeDuplicates();

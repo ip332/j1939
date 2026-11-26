@@ -11,7 +11,10 @@
 #include <sstream>
 
 bool DbcParser::parseFile(const std::string &dbc_path) {
+    if (model_mode_) return parseModelFile(dbc_path);
     top_level_ = true;
+    load_error_ = false;
+    load_error_text_.clear();
     last_message_.reset(nullptr);
     if (verbose_) {
         std::cout << dbc_path << std::endl;
@@ -46,7 +49,7 @@ bool DbcParser::parseFile(const std::string &dbc_path) {
     }
     std::string line;
     while (std::getline(infile, line)) {
-        if (line[line.size() - 1] == '\r') {
+        if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
 
@@ -61,6 +64,10 @@ bool DbcParser::parseFile(const std::string &dbc_path) {
     storeLastMessage();
     if (attribute_error_) {
         std::cerr << attribute_error_text_ << std::endl;
+        return false;
+    }
+    if (load_error_) {
+        std::cerr << load_error_text_ << std::endl;
         return false;
     }
     return true;
@@ -92,6 +99,7 @@ void DbcParser::storeLastMessage() {
     }
 }
 void DbcParser::removeDuplicates() {
+    model_normalized_ = true;
     // Extended identity is the PGN, plus the source address only when that PGN has
     // more than one layout. Priority is ignored. One layout becomes the generic row.
     // Several layouts stay source-address specific, and a generic row is added only
@@ -242,6 +250,9 @@ void DbcParser::topLevelParser(const std::string &line) {
         }
         last_message_->setDbcName(dbc_name_);
         top_level_ = false;
+    } else if (line.compare(0, 12, "SG_MUL_VAL_ ") == 0 ||
+               line.compare(0, 12, "SIG_VALTYPE_") == 0) {
+        if (portable_error_.empty()) portable_error_ = "unsupported DBC declaration: " + line;
     } else if (type5 == "VAL_ ") {
         // Split line onto fields.
         // Since this record includes string literals in double qoutes, first split string using them.
@@ -268,7 +279,10 @@ void DbcParser::topLevelParser(const std::string &line) {
         uint32_t can_id = std::stoll(fields[1]);
         auto it = raw_messages_.find(can_id);
         assertm(it != raw_messages_.end(), "VAL_ record refers to unknown CAN ID");
-        it->second.addValues(fields);
+        if (!it->second.addValues(fields) && !load_error_) {
+            load_error_ = true;
+            load_error_text_ = it->second.signalError();
+        }
     } else if (type4 == "BA_ ") {
         attributeParser(line);
     }
@@ -360,5 +374,9 @@ void DbcParser::attributeParser(const std::string &line) {
 void DbcParser::signalsParser(const std::string &line) {
     assertm(line.substr(0, 5) == " SG_ ", "SG_ record missing.");
     assertm(last_message_ != nullptr, "Unepxected SG_ record");
-    last_message_->addSignal(line);
+    // A short SG_ line is skipped. A repeated plain start bit fails the file.
+    if (!last_message_->addSignal(line) && last_message_->hasSignalError() && !load_error_) {
+        load_error_ = true;
+        load_error_text_ = last_message_->signalError();
+    }
 }

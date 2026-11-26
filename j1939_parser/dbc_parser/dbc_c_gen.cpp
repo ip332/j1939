@@ -1,4 +1,5 @@
 #include "dbc_parser.h"
+#include "dbc_number.h"
 #include "j1939_db.h"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <set>
 #include <sstream>
 #include <vector>
+#include <utility>
 
 namespace {
 
@@ -161,26 +163,8 @@ std::string flagExpr(const Signal &signal) {
     return out;
 }
 
-bool numberLiteral(const std::string &text) {
-    if (text.empty()) {
-        return false;
-    }
-    for (unsigned char c : text) {
-        if (!std::isdigit(c) && c != '.' && c != '+' && c != '-' && c != 'e' && c != 'E') {
-            return false;
-        }
-    }
-    return true;
-}
-
-std::string emitNumber(const std::string &literal, double fallback) {
-    if (numberLiteral(literal)) {
-        return literal;
-    }
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "%.17g", fallback);
-    return buf;
-}
+// All tokens are checked before building or writing either output stream.
+std::string emitNumber(const std::string &literal) { return dbcCNumber(literal); }
 
 std::string enumLabel(const std::string &stored) {
     if (stored.size() >= 2 && stored.front() == '"' && stored.back() == '"') {
@@ -401,6 +385,22 @@ std::string hex32(uint32_t value) {
 }  // namespace
 
 bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool no_strings, std::string &error) const {
+    if (!portable_error_.empty()) { error = portable_error_; return false; }
+    // Validate before PGN/layout collapse or writing either output stream.
+    for (const auto &entry : raw_messages_) {
+        if (!entry.second.validatePortableMultiplexing(error)) return false;
+        for (const auto &signal : entry.second.signalList()) {
+            for (const auto &item : {std::make_pair("scale", signal.scaleLiteral()),
+                                    std::make_pair("offset", signal.offsetLiteral()),
+                                    std::make_pair("minimum", signal.minLiteral()),
+                                    std::make_pair("maximum", signal.maxLiteral())}) {
+                if (dbcCNumber(item.second).empty()) {
+                    error = "invalid portable decimal: " + entry.second.name() + "." + signal.name() + " " + item.first;
+                    return false;
+                }
+            }
+        }
+    }
     std::vector<GenMessage> rows;
     if (!buildRows(raw_messages_, rows, error)) {
         return false;
@@ -413,7 +413,7 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
     std::string symbol = cIdent(name_.empty() ? "j1939" : name_);
     StringBlob blob;
     struct FlatEnum {
-        uint32_t value;
+        uint64_t value;
         uint32_t name_off;
     };
     std::vector<FlatEnum> enums;
@@ -536,7 +536,11 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
     if (!enums.empty()) {
         c << "static const j1939_enum_t " << symbol << "_enums[] = {\n";
         for (const FlatEnum &en : enums) {
-            c << "    { " << en.value << "u, " << (no_strings ? "J1939_NO_NAME" : std::to_string(en.name_off) + "u") << " },\n";
+            // `u` fits every value that fits in uint32_t. A wider wire pattern needs ull
+            // so a 32-bit compiler accepts the literal.
+            const char *suffix = en.value > 0xFFFFFFFFull ? "ull" : "u";
+            c << "    { " << en.value << suffix << ", "
+              << (no_strings ? "J1939_NO_NAME" : std::to_string(en.name_off) + "u") << " },\n";
         }
         c << "};\n\n";
     }
@@ -550,10 +554,10 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
             c << signal.startBit() << "u, " << signal.bitLength() << "u, ";
             c << item.enum_begin << "u, " << item.enum_count << "u, ";
             c << signal.muxValue() << "u, " << flagExpr(signal) << ", ";
-            c << emitNumber(signal.scaleLiteral(), signal.scaleValue()) << ", ";
-            c << emitNumber(signal.offsetLiteral(), signal.offsetValue()) << ", ";
-            c << emitNumber(signal.minLiteral(), signal.minValue()) << ", ";
-            c << emitNumber(signal.maxLiteral(), signal.maxValue()) << " },\n";
+            c << emitNumber(signal.scaleLiteral()) << ", ";
+            c << emitNumber(signal.offsetLiteral()) << ", ";
+            c << emitNumber(signal.minLiteral()) << ", ";
+            c << emitNumber(signal.maxLiteral()) << " },\n";
         }
         c << "};\n\n";
     }

@@ -148,6 +148,53 @@ TEST_F(DbcParserFileTest, ParseFileRejectsNonDbcExtension) {
     EXPECT_FALSE(parser.parseFile("/tmp/not_a_dbc_file.txt"));
 }
 
+TEST_F(DbcParserFileTest, RepeatedPlainStartBitFailsTheFile) {
+    std::string content =
+            "BO_ 100 Msg: 8 ECM\n"
+            " SG_ First : 0|8@1+ (1,0) [0|255] \"\" X\n"
+            " SG_ Second : 0|8@1+ (1,0) [0|255] \"\" X\n"
+            "\n";
+    DbcParser parser;
+    EXPECT_FALSE(parser.parseFile(writeTemp(content)));
+}
+
+TEST_F(DbcParserFileTest, ShortSignalLineDoesNotFailTheFile) {
+    std::string content =
+            "BO_ 100 Msg: 8 ECM\n"
+            " SG_ TooFew\n"
+            " SG_ Speed : 0|8@1+ (1,0) [0|255] \"\" X\n"
+            "\n";
+    DbcParser parser;
+    ASSERT_TRUE(parser.parseFile(writeTemp(content)));
+    parser.generateRunTimeFormat();
+    EXPECT_EQ(parser.dbc().at(100).signals_.size(), 1u);
+}
+
+TEST_F(DbcParserFileTest, ValRecordThatDoesNotFitFailsTheFile) {
+    std::string content =
+            "BO_ 100 Msg: 8 ECM\n"
+            " SG_ Mode : 0|8@1+ (1,0) [0|255] \"\" X\n"
+            "\n"
+            "VAL_ 100 Mode 18446744073709551616 \"TooBig\" ;\n";
+    DbcParser parser;
+    EXPECT_FALSE(parser.parseFile(writeTemp(content)));
+}
+
+TEST_F(DbcParserFileTest, MultiplexedSignalsThatShareAStartBitStayInThePgn) {
+    std::string content =
+            "BO_ 100 Mux: 8 ECM\n"
+            " SG_ Switch M : 0|4@1+ (1,0) [0|15] \"\" X\n"
+            " SG_ Alt m1 : 0|4@1+ (1,0) [0|15] \"\" X\n"
+            "\n";
+    DbcParser parser;
+    ASSERT_TRUE(parser.parseFile(writeTemp(content)));
+    parser.generateRunTimeFormat();
+    const PGN &pgn = parser.dbc().at(100);
+    ASSERT_EQ(pgn.signals_.size(), 2u);
+    EXPECT_EQ(pgn.signals_[0].name_, "Switch");
+    EXPECT_EQ(pgn.signals_[1].name_, "Alt");
+}
+
 TEST_F(DbcParserFileTest, ParseFileRejectsNonexistentFile) {
     DbcParser parser;
     parser.setVerbose(false);
@@ -809,6 +856,117 @@ TEST(SignalTest, ToSpnStringWrapsLongEnumLists) {
     EXPECT_GT(std::count(str.begin(), str.end(), '\n'), 1);
 }
 
+TEST(MessageTest, WideDlcSurvivesToPgn) {
+    Message msg("BO_ 100 Wide: 300 ECM\n");
+    EXPECT_EQ(msg.toPgn().dlc_, 300);
+    EXPECT_NE(msg.toPgnString().find(", 300, {"), std::string::npos);
+    Message longer("BO_ 100 Longer: 1758 ECM\n");
+    EXPECT_EQ(longer.dlc(), 1758);
+    EXPECT_EQ(longer.toPgn().dlc_, 1758);
+}
+
+TEST(MessageTest, MultiplexAlternativesStayInThePgn) {
+    Message msg("BO_ 100 Mux: 8 ECM\n");
+    EXPECT_TRUE(msg.addSignal(" SG_ Switch M : 0|4@1+ (1,0) [0|15] \"\" X\n"));
+    EXPECT_TRUE(msg.addSignal(" SG_ Alt m1 : 0|4@1+ (1,0) [0|15] \"\" X\n"));
+    EXPECT_FALSE(msg.hasSignalError());
+    PGN pgn = msg.toPgn();
+    ASSERT_EQ(pgn.signals_.size(), 2u);
+    EXPECT_EQ(pgn.signals_[0].name_, "Switch");
+    EXPECT_EQ(pgn.signals_[1].name_, "Alt");
+    std::string text = msg.toPgnString();
+    EXPECT_NE(text.find("Switch"), std::string::npos);
+    EXPECT_NE(text.find("Alt"), std::string::npos);
+    // The packed union cannot overlay both signals, so it keeps the first.
+    std::string packed = msg.toUnion();
+    EXPECT_NE(packed.find("switch"), std::string::npos);
+    EXPECT_EQ(packed.find("alt"), std::string::npos);
+}
+
+TEST(MessageTest, PlainSignalsThatShareAStartBitAreAnError) {
+    Message msg("BO_ 100 Msg: 8 ECM\n");
+    EXPECT_TRUE(msg.addSignal(" SG_ First : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_FALSE(msg.addSignal(" SG_ Second : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_TRUE(msg.hasSignalError());
+    EXPECT_NE(msg.signalError().find("start bit 0"), std::string::npos);
+    EXPECT_EQ(msg.allSignals().size(), 1u);
+    ASSERT_EQ(msg.toPgn().signals_.size(), 1u);
+    EXPECT_EQ(msg.toPgn().signals_[0].name_, "First");
+}
+
+TEST(MessageTest, PlainSignalBesideAMultiplexorIsKept) {
+    Message msg("BO_ 100 Msg: 8 ECM\n");
+    EXPECT_TRUE(msg.addSignal(" SG_ Switch M : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_TRUE(msg.addSignal(" SG_ Plain : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_FALSE(msg.hasSignalError());
+    EXPECT_EQ(msg.toPgn().signals_.size(), 2u);
+
+    Message reversed("BO_ 101 Msg: 8 ECM\n");
+    EXPECT_TRUE(reversed.addSignal(" SG_ Plain : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_TRUE(reversed.addSignal(" SG_ Switch M : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_EQ(reversed.toPgn().signals_.size(), 2u);
+
+    Message multiplexedFirst("BO_ 102 Msg: 8 ECM\n");
+    EXPECT_TRUE(multiplexedFirst.addSignal(" SG_ Alt m1 : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_TRUE(multiplexedFirst.addSignal(" SG_ Plain : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_EQ(multiplexedFirst.toPgn().signals_.size(), 2u);
+}
+
+TEST(MessageTest, MultiplexedSignalBesideAPlainSignalIsKept) {
+    Message msg("BO_ 100 Msg: 8 ECM\n");
+    EXPECT_TRUE(msg.addSignal(" SG_ Plain : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_TRUE(msg.addSignal(" SG_ Alt m2 : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    EXPECT_FALSE(msg.hasSignalError());
+    ASSERT_EQ(msg.toPgn().signals_.size(), 2u);
+    EXPECT_EQ(msg.toPgn().signals_[0].name_, "Plain");
+    EXPECT_EQ(msg.toPgn().signals_[1].name_, "Alt");
+}
+
+TEST(SignalTest, ByteAlignedLengthAbove64IsKept) {
+    Signal signal(" SG_ Vin : 0|200@1+ (1,0) [0|1] \"\" X\n");
+    EXPECT_TRUE(signal.valid());
+    EXPECT_EQ(signal.bitLength(), 200);
+    EXPECT_EQ(signal.toSpn().length_, 200);
+}
+
+TEST(SignalTest, ScaleKeepsTheDoubleFromTheDecimalText) {
+    Signal signal(" SG_ Tiny : 0|32@1+ (1e-7,0) [0|1] \"\" X\n");
+    EXPECT_TRUE(signal.valid());
+    SPN spn = signal.toSpn();
+    EXPECT_DOUBLE_EQ(spn.scalar_, std::stod("1e-7"));
+    EXPECT_DOUBLE_EQ(spn.offset_, 0.0);
+    EXPECT_NE(spn.scalar_, static_cast<double>(std::stof("1e-7")));
+}
+
+TEST(SignalTest, EnumValueAboveSigned32Fits) {
+    Signal signal(" SG_ Mode : 0|32@1+ (1,0) [0|4294967295] \"\" X\n");
+    EXPECT_TRUE(signal.addValue(splitString("VAL_ 100 Mode 3000000000 \"High\" 2147483648 \"Mid\" ;", ' ')));
+    EXPECT_EQ(signal.enums().at(3000000000ull), "\"High\"");
+    EXPECT_EQ(signal.enums().at(2147483648ull), "\"Mid\"");
+    EXPECT_EQ(signal.toSpn().enum_names_.at(3000000000ull), "\"High\"");
+    EXPECT_NE(signal.toSpnString().find("3000000000"), std::string::npos);
+    EXPECT_NE(signal.toSpnString().find("2147483648"), std::string::npos);
+}
+
+TEST(SignalTest, AddValueRejectsValuesThatDoNotFit) {
+    Signal overflow(" SG_ Mode : 0|8@1+ (1,0) [0|255] \"\" X\n");
+    EXPECT_FALSE(overflow.addValue(splitString("VAL_ 100 Mode 18446744073709551616 \"TooBig\" ;", ' ')));
+    EXPECT_NE(overflow.valueError().find("18446744073709551616"), std::string::npos);
+
+    Signal junk(" SG_ Mode : 0|8@1+ (1,0) [0|255] \"\" X\n");
+    EXPECT_FALSE(junk.addValue(splitString("VAL_ 100 Mode 12x \"Bad\" ;", ' ')));
+
+    Signal words(" SG_ Mode : 0|8@1+ (1,0) [0|255] \"\" X\n");
+    EXPECT_FALSE(words.addValue(splitString("VAL_ 100 Mode abc \"Bad\" ;", ' ')));
+
+    Signal negative(" SG_ Mode : 0|8@1+ (1,0) [0|255] \"\" X\n");
+    EXPECT_FALSE(negative.addValue(splitString("VAL_ 100 Mode -1 \"Neg\" ;", ' ')));
+
+    Signal empty(" SG_ Mode : 0|8@1+ (1,0) [0|255] \"\" X\n");
+    std::vector<std::string> fields = {"VAL_", "100", "Mode", "", "\"X\""};
+    EXPECT_FALSE(empty.addValue(fields));
+}
+
 TEST(SignalTest, ToPackedIntUsesRawNameWhenSnakeCaseDisabled) {
     Signal signal(" SG_ MyValue : 0|8@1+ (1,0) [0|255] \"\" Vector__XXX\n");
     uint16_t start_bit = 0;
@@ -850,4 +1008,22 @@ TEST(SignalDeathTest, ToPackedIntAssertsWhenStartBitPrecedesPreviousField) {
     Signal signal(" SG_ Name : 8|8@1+ (1,0) [0|255] \"\" Vector__XXX\n"); // little-endian, start_bit=8
     uint16_t start_bit = 20; // pretend the previous field already consumed through bit 20
     EXPECT_DEATH(signal.toPackedInt(&start_bit), "");
+}
+
+TEST(SignalTest, LegacyUnitAndMuxFallbacksRemainInspectable) {
+    for(const auto &unit : {std::string("unquoted"),std::string("\"unfinished")}) {
+        Signal signal(" SG_ S : 0|8@0- (1,2) [-128|127] "+unit+" ECU\n");
+        ASSERT_TRUE(signal.valid());
+        EXPECT_EQ(signal.unitsLiteral(),unit);
+        EXPECT_NE(signal.toSpnString().find("true, false"),std::string::npos);
+        EXPECT_NE(signal.toGetSetMethod().find("double"),std::string::npos);
+        Signal packed(" SG_ T : 0|8@1- (1,0) [-128|127] \"\" ECU\n");
+        uint16_t end=0;
+        EXPECT_NE(packed.toPackedInt(&end).find("int64_t"),std::string::npos);
+    }
+    for(const auto &marker : {std::string("X"),std::string("m1MX")}) {
+        Signal signal(" SG_ S "+marker+" : 0|8@1+ (1,0) [0|255] \"\" ECU\n");
+        EXPECT_TRUE(signal.valid());EXPECT_FALSE(signal.portableMuxValid());
+    }
+    EXPECT_THROW(Signal(" SG_ S : 0|8@1+ (wat,0) [0|255] \"\" ECU\n",true),std::invalid_argument);
 }
