@@ -1,11 +1,13 @@
 #include "dbc_parser.h"
 #include "dbc_number.h"
 #include "j1939_db.h"
+#include "j1939_db_metadata.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <map>
+#include <locale>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -171,6 +173,13 @@ std::string enumLabel(const std::string &stored) {
         return stored.substr(1, stored.size() - 2);
     }
     return stored;
+}
+
+// Both compact and metadata tables use the same offset/sentinel spelling.
+// Stream the number directly instead of constructing a temporary string per row.
+void emitOffset(std::ostream &out, bool omitted, uint32_t offset) {
+    if (omitted) out << "J1939_NO_NAME";
+    else out << offset << "u";
 }
 
 class StringBlob {
@@ -385,6 +394,19 @@ std::string hex32(uint32_t value) {
 }  // namespace
 
 bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool no_strings, std::string &error) const {
+    return generateCOutput(c_out, h_out, no_strings, error, false);
+}
+
+bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool no_strings,
+                              std::string &error, bool metadata) const {
+    if (metadata) {
+        if (no_strings || !model_mode_ || model_failed_ || model_normalized_ ||
+            model_sources_.empty() || raw_messages_.empty()) {
+            error = "C metadata requires successful strict model parsing, strings, and unnormalized messages";
+            return false;
+        }
+        if (!validateModel(error)) return false;
+    }
     if (!portable_error_.empty()) { error = portable_error_; return false; }
     // Validate before PGN/layout collapse or writing either output stream.
     for (const auto &entry : raw_messages_) {
@@ -506,13 +528,99 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
         }
         return a.signal_index < b.signal_index;
     });
-    if (spns.size() > 0xFFFFu || names.size() > 0xFFFFu || enums.size() > 0xFFFFu) {
+    if (spns.size() > 0xFFFFu || names.size() > 0xFFFFu || enums.size() > 0xFFFFu || flat.size() > 0xFFFFu) {
         error = "too many index entries for a uint16 index";
         return false;
     }
 
+    // Extension entries refer to existing decode rows; never duplicate bit
+    // layouts/numeric constants. Original definitions retain aliases and SPN
+    // presence that the compact decoder's canonicalization intentionally loses.
+    std::ostringstream source_meta, signal_meta, message_defs, signal_defs;
+    source_meta.imbue(std::locale::classic());
+    signal_meta.imbue(std::locale::classic());
+    message_defs.imbue(std::locale::classic());
+    signal_defs.imbue(std::locale::classic());
+    size_t definition_signals = 0;
+    if (metadata) {
+        if (model_sources_.size() > UINT16_MAX) {
+            error = "C metadata exceeds uint16 source indices";
+            return false;
+        }
+        std::map<std::string, size_t> source_indices;
+        for (const auto &entry : model_sources_) {
+            const auto &source = entry.second;
+            source_indices.emplace(entry.first, source_indices.size());
+            const auto name_off = blob.intern(source.name);
+            const auto version_off = source.has_version ? blob.intern(source.dbc_version) : J1939_NO_NAME;
+            source_meta << "    { " << name_off << "u, ";
+            emitOffset(source_meta, !source.has_version, version_off);
+            source_meta << ", UINT64_C(" << source.bytes << "), UINT64_C(0x" << source.fingerprint << ") },\n";
+        }
+        for (const auto &item : flat) {
+            const auto &s = item.signal->signal;
+            const auto &unit = s.unitsLiteral();
+            // Sequence interning explicitly: C++14 does not prescribe operand
+            // evaluation order for a chain of overloaded stream operators.
+            const auto unit_off = blob.intern(unit.substr(1, unit.size() - 2));
+            const auto scale_off = blob.intern(s.scaleLiteral());
+            const auto offset_off = blob.intern(s.offsetLiteral());
+            const auto min_off = blob.intern(s.minLiteral());
+            const auto max_off = blob.intern(s.maxLiteral());
+            signal_meta << "    { " << unit_off << "u, " << scale_off << "u, " << offset_off << "u, "
+                << min_off << "u, " << max_off << "u },\n";
+        }
+        for (const auto &entry : raw_messages_) {
+            const auto &message = entry.second;
+            auto signals = message.allSignals();
+            std::sort(signals.begin(), signals.end(), signalLess);
+            size_t index = rows.size();
+            for (size_t m = 0; m < rows.size(); ++m) {
+                const auto &row = rows[m];
+                if (bool(row.extended) != isExtendedId(message) ||
+                    (row.extended ? row.pgn != message.pgn() || (row.sa_mask && row.sa != message.sa())
+                                  : row.can_id != (message.canId() & 0x7ffu)) ||
+                    row.dlc != message.dlc() || row.signals.size() != signals.size()) continue;
+                bool equal = true;
+                for (size_t i = 0; i < signals.size(); ++i)
+                    equal &= signals[i].sameLayout(row.signals[i].signal);
+                if (equal) { index = m; break; }
+            }
+            if (index == rows.size()) { error = "C metadata cannot associate original definition: " + message.name(); return false; }
+            const auto &location = model_messages_.at(entry.first);
+            if (location.line > UINT32_MAX || definition_signals + signals.size() > UINT32_MAX) {
+                error = "C metadata definition/line limit exceeded"; return false;
+            }
+            unsigned flags = (message.hasMessageSpn() ? J1939_META_HAS_SPN : 0) |
+                (message.hasDefaultMark() ? J1939_META_HAS_DEFAULT : 0) |
+                (message.defaultMark() ? J1939_META_DEFAULT : 0);
+            message_defs << "    { " << entry.first << "u, " << blob.intern(message.name()) << "u, "
+                << location.line << "u, " << message.messageSpn() << "u, " << definition_signals << "u, "
+                << source_indices.at(location.source) << "u, " << index << "u, " << signals.size() << "u, " << flags << "u },\n";
+            for (size_t i = 0; i < signals.size(); ++i) {
+                const auto &s = signals[i];
+                const auto &canonical = rows[index].signals[i].signal;
+                if (s.unitsLiteral() != canonical.unitsLiteral() || s.scaleLiteral() != canonical.scaleLiteral() ||
+                    s.offsetLiteral() != canonical.offsetLiteral() || s.minLiteral() != canonical.minLiteral() ||
+                    s.maxLiteral() != canonical.maxLiteral()) {
+                    error = "C metadata cannot collapse distinct units/decimal text: " + message.name() + "." + s.name() +
+                        "; generate separate databases or resolve the definition conflict";
+                    return false;
+                }
+                const auto &sloc = model_signals_.at({entry.first, s.name()});
+                if (sloc.line > UINT32_MAX) { error = "C metadata signal line limit exceeded"; return false; }
+                signal_defs << "    { " << blob.intern(s.name()) << "u, " << sloc.line << "u, " << s.spn() << "u, "
+                    << signal_begin[index] + i << "u, " << (s.hasSpn() ? J1939_META_HAS_SPN : 0) << "u },\n";
+            }
+            definition_signals += signals.size();
+        }
+        if (blob.bytes().size() >= UINT32_MAX) { error = "C metadata string pool exceeds uint32 offsets"; return false; }
+    }
+
     std::ostringstream c;
     std::ostringstream h;
+    c.imbue(std::locale::classic());
+    h.imbue(std::locale::classic());
     std::string guard = cIdent(symbol + "_db_h");
     for (char &ch : guard) {
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -524,6 +632,7 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
 
     c << "/* Generated from DBC. Do not edit. */\n";
     c << "#include \"j1939_db.h\"\n\n";
+    if (metadata) c << "#include \"j1939_db_metadata.h\"\n#if J1939_DB_METADATA_VERSION != 1u\n#error C metadata version mismatch\n#endif\n\n";
     if (!no_strings) {
         c << "static const char " << symbol << "_strings[] = {\n";
         if (blob.bytes().empty()) {
@@ -539,8 +648,9 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
             // `u` fits every value that fits in uint32_t. A wider wire pattern needs ull
             // so a 32-bit compiler accepts the literal.
             const char *suffix = en.value > 0xFFFFFFFFull ? "ull" : "u";
-            c << "    { " << en.value << suffix << ", "
-              << (no_strings ? "J1939_NO_NAME" : std::to_string(en.name_off) + "u") << " },\n";
+            c << "    { " << en.value << suffix << ", ";
+            emitOffset(c, no_strings, en.name_off);
+            c << " },\n";
         }
         c << "};\n\n";
     }
@@ -549,7 +659,9 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
         for (const FlatSignal &item : flat) {
             const Signal &signal = item.signal->signal;
             c << "    { /* " << signal.name() << " */\n";
-            c << "        " << (no_strings ? "J1939_NO_NAME" : std::to_string(item.name_off) + "u") << ", ";
+            c << "        ";
+            emitOffset(c, no_strings, item.name_off);
+            c << ", ";
             c << signal.spn() << "u, ";
             c << signal.startBit() << "u, " << signal.bitLength() << "u, ";
             c << item.enum_begin << "u, " << item.enum_count << "u, ";
@@ -566,7 +678,9 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
         for (size_t m = 0; m < rows.size(); m++) {
             const GenMessage &row = rows[m];
             c << "    { /* " << row.name << " */\n";
-            c << "        " << (no_strings ? "J1939_NO_NAME" : std::to_string(message_name_off[m]) + "u") << ", ";
+            c << "        ";
+            emitOffset(c, no_strings, message_name_off[m]);
+            c << ", ";
             c << hex32(row.pgn) << "u, " << hex32(row.can_id) << "u, " << hex32(row.sa_mask) << "u, ";
             c << static_cast<unsigned>(row.sa) << "u, " << static_cast<unsigned>(row.extended) << "u, ";
             c << row.dlc << "u, " << signal_begin[m] << "u, " << signal_count[m] << "u },\n";
@@ -605,11 +719,23 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
     c << "    " << names.size() << "u\n";
     c << "};\n";
 
+    if (metadata) {
+        c << "static const j1939_source_metadata_t " << symbol << "_sources[] = {\n" << source_meta.str() << "};\n"
+          << "static const j1939_signal_metadata_t " << symbol << "_signal_metadata[] = {\n" << signal_meta.str() << "};\n"
+          << "static const j1939_message_definition_t " << symbol << "_message_definitions[] = {\n" << message_defs.str() << "};\n"
+          << "static const j1939_signal_definition_t " << symbol << "_signal_definitions[] = {\n" << signal_defs.str() << "};\n"
+          << "const j1939_db_metadata_t " << symbol << "_metadata = {\n    1u, &" << symbol << "_db, "
+          << symbol << "_signal_metadata, " << symbol << "_sources, " << symbol << "_message_definitions, " << symbol << "_signal_definitions,\n    "
+          << model_sources_.size() << "u, " << raw_messages_.size() << "u, " << definition_signals << "u, " << blob.bytes().size() << "u\n};\n";
+    }
+
     h << "/* Generated from DBC. Do not edit. */\n";
     h << "#ifndef " << guard << "\n";
     h << "#define " << guard << "\n\n";
     h << "#include \"j1939_db.h\"\n\n";
     h << "extern const j1939_db_t " << symbol << "_db;\n\n";
+    if (metadata) h << "#include \"j1939_db_metadata.h\"\n#if J1939_DB_METADATA_VERSION != 1u\n#error C metadata version mismatch\n#endif\n"
+        << "extern const j1939_db_metadata_t " << symbol << "_metadata;\n\n";
     std::set<std::string> defines;
     for (const GenMessage &row : rows) {
         std::string id = uniqueIdent(defines, cIdent(row.name) + (row.extended ? "_PGN" : "_CAN_ID"));
@@ -630,5 +756,6 @@ bool DbcParser::generateCOutput(std::ostream &c_out, std::ostream &h_out, bool n
 
     c_out << c.str();
     h_out << h.str();
+    if (!c_out || !h_out) { error = "C database output stream failed"; return false; }
     return true;
 }

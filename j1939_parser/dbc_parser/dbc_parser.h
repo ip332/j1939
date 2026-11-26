@@ -111,6 +111,9 @@ public:
     // is written and `error` explains the collapse or signal problem.
     // `no_strings` leaves name_off as J1939_NO_NAME and omits the string blob.
     bool generateCOutput(std::ostream &c_out, std::ostream &h_out, bool no_strings, std::string &error) const;
+    // Opt-in interpretation extension; requires successful strict model parsing.
+    bool generateCOutput(std::ostream &c_out, std::ostream &h_out, bool no_strings,
+                         std::string &error, bool metadata) const;
 
     // Generates run-time format into rt_messages_
     void generateRunTimeFormat();

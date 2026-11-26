@@ -30,6 +30,7 @@ int main(int argc, const char* argv[]) {
     std::string model_path;
     std::string var_name;
     bool no_strings = false;
+    bool c_metadata = false;
 
     options.addOption("-in", "Full path of the input DBC file (multiple input files are supported).", &inputs);
     options.addOption("-name", "Defines variable name in the output files. By default, the first input DBC name will be used.", &var_name);
@@ -39,9 +40,14 @@ int main(int argc, const char* argv[]) {
     options.addOption("-c_path", "Full path of the generated plain-C database (.c). A matching .h is written beside it.", &c_path);
     options.addOption("-model_path", "Strict version-1 protobuf Text Format DBC model for host-side consumers (exclusive output mode).", &model_path);
     options.addOption("-no-strings", "Omit signal and message names from the plain-C database.", &no_strings);
+    options.addOption("-c-metadata", "Retain strict interpretation/provenance metadata with -c_path (requires strings).", &c_metadata);
 
     if (!options.processArgs(argc, argv)) {
         return 1;
+    }
+    if (c_metadata && (c_path.empty() || no_strings || !model_path.empty())) {
+        std::cerr << "-c-metadata requires -c_path and cannot use -no-strings or -model_path" << std::endl;
+        return 2;
     }
 
     if (inputs.size() == 0 || (union_path.empty() && pgn_path.empty() && c_path.empty() && accessor_path.empty() && model_path.empty())) {
@@ -76,9 +82,13 @@ int main(int argc, const char* argv[]) {
     }
     // Load all input files into RAM
     DbcParser parser;
+    if (c_metadata) {
+        parser.setModelExportMode();
+        if (!var_name.empty()) parser.setName(var_name);
+    }
     for (auto in : inputs) {
         if (!parser.parseFile(in)) {
-            return -3;
+            return c_metadata ? 4 : -3;
         }
     }
     // Validate every requested portable artifact before opening any output.
@@ -95,7 +105,7 @@ int main(int argc, const char* argv[]) {
             header_path.replace(dot, std::string::npos, ".h");
         }
         std::string error;
-        if (!parser.generateCOutput(c_text, h_text, no_strings, error)) {
+        if (!parser.generateCOutput(c_text, h_text, no_strings, error, c_metadata)) {
             std::cerr << error << std::endl;
             return 4;
         }

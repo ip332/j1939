@@ -17,3 +17,4 @@ c++ -std=c++14 -Wall -Wextra -Werror ${host_flags[@]+"${host_flags[@]}"} \
 protoc -I schema --python_out="$build_dir" schema/dbc_model_v1.proto
 PYTHONPATH="$build_dir${PYTHONPATH:+:$PYTHONPATH}" \
     python3 tests/dbc_model_consumer_tests.py "$build_dir/dbc_compiler"
+python3 tests/dbc_metadata_cli_tests.py "$build_dir/dbc_compiler"
