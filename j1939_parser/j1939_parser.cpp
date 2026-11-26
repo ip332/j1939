@@ -37,6 +37,7 @@ void J1939Parser::toStringPgn(const PGN &pgn, std::basic_ostream<char> &out, boo
 
     out << std::string(buf) << PayloadToHex() << " {";
     for (const auto & spn : pgn.signals_) {
+        if (!signalActive(pgn, spn)) continue;
         uint64_t value = read_value(spn.start_bit_, spn.length_, spn.little_endian_);
         if (show_unset_bits || (value != make_mask(spn.length_))) {
             out << spn.toString(value);
@@ -106,7 +107,7 @@ void J1939Parser::scanAllSignals(const std::function<void(const SPN &)> &callbac
     const PGN *pgn = getPgn();
     if (pgn != nullptr) {
         for(const auto & spn : pgn->signals_) {
-            if ((spn.start_bit_ + spn.length_) / 8 <= frame_.dlc_) {
+            if (signalActive(*pgn, spn) && (spn.start_bit_ + spn.length_) / 8 <= frame_.dlc_) {
                 if (!show_unset_bits) {
                     auto raw_value_ptr = signalRawValue(spn);
                     if (raw_value_ptr && (*raw_value_ptr == make_mask(spn.length_))) {
@@ -124,13 +125,16 @@ const SPN *J1939Parser::signal(const char * name) const {
     if (pgn == nullptr) {
         return nullptr;
     }
-    return pgn->signalByName(name);
+    for (const auto &spn : pgn->signals_) {
+        if (spn.name_ == name && signalActive(*pgn, spn)) return &spn;
+    }
+    return nullptr;
 }
 
 std::unique_ptr<uint64_t>J1939Parser::signalRawValue(const SPN &spn) const {
     std::unique_ptr<uint64_t> result;
     const PGN *pgn = getPgn();
-    if (pgn == nullptr) {
+    if (pgn == nullptr || !signalActive(*pgn, spn)) {
         return result;
     }
     uint64_t mask = make_mask(spn.length_);
@@ -243,8 +247,22 @@ std::set<uint32_t> J1939Parser::pgnFor(const std::string & signal, const std::ma
     for (const auto & it: dbc) {
         if (it.second.signalByName(signal.c_str())) {
             result.emplace(it.first);
-            break;
         }
     }
     return result;
+}
+
+bool J1939Parser::signalActive(const PGN &pgn, const SPN &spn) const {
+    if (!spn.multiplexed_) return true;
+    for (const auto &sw : pgn.signals_) {
+        if (!sw.multiplexor_ || sw.multiplexed_) continue;
+        if (sw.length_ == 0 || sw.length_ > 64) return false;
+        int bit = sw.start_bit_;
+        for (unsigned i = 0; i < sw.length_; ++i) {
+            if (bit < 0 || bit >= frame_.dlc_ * 8) return false;
+            bit = sw.little_endian_ ? bit + 1 : (bit % 8 == 0 ? bit + 15 : bit - 1);
+        }
+        return read_value(sw.start_bit_, sw.length_, sw.little_endian_) == spn.mux_value_;
+    }
+    return false;
 }

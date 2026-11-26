@@ -102,11 +102,22 @@ void expectSameRaw(const j1939_db_t *db, const std::map<uint32_t, PGN> &cpp_db, 
     ASSERT_NE(sig, nullptr) << pgn.name_ << " signal " << spn.name_;
     EXPECT_EQ(sig->start_bit, spn.start_bit_) << spn.name_;
     EXPECT_EQ(sig->length, spn.length_) << spn.name_;
+    EXPECT_EQ((sig->flags & J1939_SIG_MULTIPLEXOR) != 0, spn.multiplexor_);
+    EXPECT_EQ((sig->flags & J1939_SIG_MULTIPLEXED) != 0, spn.multiplexed_);
+    EXPECT_EQ(sig->mux_value, spn.mux_value_);
     EXPECT_EQ((sig->flags & J1939_SIG_LITTLE_ENDIAN) != 0, spn.little_endian_) << spn.name_;
 
     J1939_frame writer;
     writer.reset(0);
     writer.write_bits(pattern, spn.start_bit_, spn.length_, spn.little_endian_);
+    if (spn.multiplexed_) {
+        for (const auto &sw : pgn.signals_) {
+            if (sw.multiplexor_ && !sw.multiplexed_) {
+                writer.write_bits(spn.mux_value_, sw.start_bit_, sw.length_, sw.little_endian_);
+                break;
+            }
+        }
+    }
     uint8_t payload[64];
     memset(payload, 0, sizeof(payload));
     memcpy(payload, writer.buffer_, sizeof(payload));
@@ -118,6 +129,9 @@ void expectSameRaw(const j1939_db_t *db, const std::map<uint32_t, PGN> &cpp_db, 
     ASSERT_TRUE(frame.setFrom(can_id, payload, 64)) << std::hex << can_id;
     J1939Parser view(frame, cpp_db);
     auto from_cpp = view.signalRawValue(spn);
+    const int active = j1939_signal_active(db, message, payload, 64, sig);
+    EXPECT_EQ(static_cast<bool>(from_cpp), active == 1);
+    if (active != 1) return;
     ASSERT_NE(from_cpp.get(), nullptr) << pgn.name_ << " " << spn.name_ << " can " << std::hex << can_id
                                        << " rebuilt " << frame.canID();
     EXPECT_EQ(from_c, *from_cpp) << pgn.name_ << " " << spn.name_;

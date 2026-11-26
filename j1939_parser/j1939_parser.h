@@ -39,6 +39,8 @@ class J1939Parser {
     // Returns bits corresponded to given SPN.
     uint64_t spnValue(const SPN &spn) const;
 
+    bool signalActive(const PGN &pgn, const SPN &spn) const;
+
     // Output content into provided stream in a human readable form.
     void toStringPgn(const PGN &pgn, std::basic_ostream<char> &out, bool show_unset_bits) const;
 
@@ -97,7 +99,8 @@ public:
         return setSignalValue(name.c_str(), enum_name);
     }
 
-    // Find all PGNs which may contain the given signal
+    // Return every database key whose message contains this signal name.
+    // Matches are by name; an unknown name returns an empty set.
     static std::set<uint32_t> pgnFor(const std::string & signal, const std::map<uint32_t, PGN> &dbc);
 };
 

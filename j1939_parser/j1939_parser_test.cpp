@@ -487,6 +487,87 @@ TEST(J1939ParserPgnForTest, ReturnsEmptySetForUnknownSignal) {
     EXPECT_TRUE(pgns.empty());
 }
 
+TEST(J1939MultiplexTest, ReadsOnlyActiveAlternativesButWritesByName) {
+    Message message("BO_ 100 Mux: 3 X\n");
+    ASSERT_TRUE(message.addSignal(" SG_ Switch M : 0|8@1+ (1,0) [0|255] \"\" X\n"));
+    ASSERT_TRUE(message.addSignal(" SG_ A m0 : 8|8@1+ (1,0) [0|255] \"\" X\n"));
+    ASSERT_TRUE(message.addSignal(" SG_ B m1 : 8|8@1+ (1,0) [0|255] \"\" X\n"));
+    ASSERT_TRUE(message.addSignal(" SG_ Always : 16|8@1+ (1,0) [0|255] \"\" X\n"));
+    const std::map<uint32_t, PGN> dbc{{100, message.toPgn()}};
+    J1939_frame frame;
+    const uint8_t payload[] = {0, 42, 9};
+    ASSERT_TRUE(frame.setFrom(100, payload, sizeof(payload)));
+    J1939Parser parser(frame, dbc);
+    const SPN &a = *dbc.at(100).signalByName("A");
+    const SPN &b = *dbc.at(100).signalByName("B");
+    EXPECT_TRUE(dbc.at(100).signals_[0].multiplexor_);
+    EXPECT_EQ(b.mux_value_, 1);
+    EXPECT_NE(message.toPgnString().find("true, false, 0"), std::string::npos);
+    EXPECT_NE(message.toPgnString().find("false, true, 1"), std::string::npos);
+    for (unsigned sw = 0; sw < 2; ++sw) {
+        frame.buffer_[0] = sw;
+        const char *active = sw ? "B" : "A";
+        const char *inactive = sw ? "A" : "B";
+        EXPECT_NE(parser.signal(active), nullptr);
+        EXPECT_EQ(parser.signal(inactive), nullptr);
+        ASSERT_TRUE(parser.signalRawValue(active, true));
+        EXPECT_EQ(*parser.signalRawValue(active, true), 42u);
+        EXPECT_FALSE(parser.signalRawValue(inactive, true));
+        EXPECT_FALSE(parser.signalValue(inactive, true));
+        EXPECT_FALSE(parser.signalRawValue32(inactive, true));
+        EXPECT_FALSE(parser.signalRawValue(sw ? a : b));
+        EXPECT_FALSE(parser.signalValue(sw ? a : b));
+        ASSERT_TRUE(parser.signalRawValue("Always"));
+        EXPECT_EQ(*parser.signalRawValue("Always"), 9u);
+        for (bool show_unset : {false, true}) {
+            std::vector<std::string> names;
+            parser.scanAllSignals([&](const SPN &s) { names.push_back(s.name_); }, show_unset);
+            EXPECT_EQ(names, (std::vector<std::string>{"Switch", active, "Always"}));
+            std::ostringstream text;
+            parser.toString(text, show_unset);
+            EXPECT_EQ(text.str().find(std::string(inactive) + ":"), std::string::npos);
+        }
+        ASSERT_TRUE(parser.setSignalValue(inactive, 17));
+        EXPECT_EQ(frame.buffer_[0], sw);
+        EXPECT_EQ(frame.buffer_[1], 17);
+        frame.buffer_[1] = 42;
+    }
+    frame.dlc_ = 0; // A truncated switch cannot make an alternative active.
+    EXPECT_FALSE(parser.signalRawValue(a));
+    EXPECT_FALSE(parser.signalRawValue(b));
+    auto no_switch = dbc;
+    no_switch.at(100).signals_[0].multiplexed_ = true; // Nested switches are not pure switches.
+    frame.dlc_ = 3;
+    J1939Parser nested(frame, no_switch);
+    EXPECT_EQ(nested.signal("A"), nullptr);
+}
+
+TEST(J1939MultiplexTest, UsesMotorolaSwitchAndFindsActiveDuplicateName) {
+    const SPN sw{"Switch", 7, 12, false, false, 1, 0, 0, 4095, {}, true, false, 0};
+    const SPN a{"Same", 16, 8, false, true, 1, 0, 0, 255, {{5, "Five"}}, false, true, 0};
+    const SPN b{"Same", 24, 8, false, true, 1, 0, 0, 255, {}, false, true, 1};
+    std::map<uint32_t, PGN> dbc{{100, {"Mux", 4, {sw, a, b}}}};
+    J1939_frame frame;
+    uint8_t payload[] = {0, 0x1f, 42, 17}; // Motorola switch = 1, low nibble is unrelated.
+    ASSERT_TRUE(frame.setFrom(100, payload, sizeof(payload)));
+    J1939Parser parser(frame, dbc);
+    EXPECT_EQ(parser.signal("Same"), &dbc.at(100).signals_[2]);
+    ASSERT_TRUE(parser.signalRawValue("Same"));
+    EXPECT_EQ(*parser.signalRawValue("Same"), 17u);
+    // Enum writes use metadata even when the named signal is inactive.
+    EXPECT_TRUE(parser.setSignalValue("Same", "Five"));
+    EXPECT_EQ(frame.buffer_[2], 5);
+    EXPECT_EQ(frame.buffer_[0], 0);
+    EXPECT_EQ(frame.buffer_[1], 0x1f);
+    frame.dlc_ = 1;
+    EXPECT_EQ(parser.signal("Same"), nullptr);
+    frame.dlc_ = 4;
+    for (unsigned length : {0u, 65u}) {
+        dbc.at(100).signals_[0].length_ = length;
+        EXPECT_EQ(parser.signal("Same"), nullptr);
+    }
+}
+
 TEST(J1939ParserLookupTest, ToStringOnExtendedFrameUsesExtendedFormat) {
     const std::map<uint32_t, PGN> dbc{
         {j1939PgnKey(0xFE00), {"StatusMsg", 8, {}}},
@@ -528,4 +609,12 @@ TEST_F(J1939ParserTest, SetValuesConfigBigEndianTest) {
     parser_->setSignalValue("RadarCfg_MaxDistance",50);
     EXPECT_EQ(frame_.buffer_[1], 6);
     EXPECT_EQ(frame_.buffer_[2], 64);
+}
+
+TEST(J1939ParserLookupTest, FindsEveryMessageContainingTheName) {
+    const SPN shared{"Shared", 0, 8, false, true, 1, 0, 0, 255, {}};
+    const std::map<uint32_t, PGN> dbc{{100, {"First", 1, {shared}}},
+                                       {101, {"Second", 1, {shared}}},
+                                       {102, {"Empty", 1, {}}}};
+    EXPECT_EQ(J1939Parser::pgnFor("Shared", dbc), (std::set<uint32_t>{100, 101}));
 }

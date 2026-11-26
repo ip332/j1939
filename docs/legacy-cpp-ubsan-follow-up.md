@@ -7,10 +7,14 @@ are outside the generated-C observed-PGN producer and are not fixed by it.
 
 | Location | Observed trigger |
 | --- | --- |
-| `j1939_parser/j1939_parser.cpp:214` | Scale-1/offset-0 negative floating value converted to `uint64_t` in `setSignalValue` |
-| `j1939_parser/j1939_parser.cpp:216` | Negative scaled floating value converted to `uint64_t` |
+| `j1939_parser/j1939_parser.cpp:218` | Scale-1/offset-0 negative floating value converted to `uint64_t` in `setSignalValue` |
+| `j1939_parser/j1939_parser.cpp:220` | Negative scaled floating value converted to `uint64_t` |
 | `j1939_parser/j1939_frame.cpp:194` | Signed subtraction overflow in `SPN::toDouble` |
 | `j1939_parser/j1939_codec_tests.cpp:94,106,118,131` | Test expected-value expressions shift by 64 |
+
+The writer sites were at lines 214 and 216 in the original reviewed tree
+(`637878e`); merging the C++ mux fixes from main moved them to 218 and 220.
+The other diagnostic locations are unchanged.
 
 Reproduce separately from the focused C decoder/model tests:
 

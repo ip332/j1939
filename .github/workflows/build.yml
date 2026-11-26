@@ -5,18 +5,57 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   docker-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test coverage comparison
+        run: python3 -m unittest discover -s scripts -p 'check_coverage_test.py'
       - name: Build and test via Docker
         run: docker build -t j1939 .
-      - name: Check coverage hasn't regressed
+      - name: Measure current coverage
         run: |
-          docker run --rm j1939 sh -c "
-            cmake -S /src -B /src/build_cov -DENABLE_COVERAGE=ON &&
-            cmake --build /src/build_cov --target coverage"
+          mkdir -p coverage-reports/head
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/input:ro" \
+            -v "$GITHUB_WORKSPACE/scripts/collect_coverage.sh:/collect.sh:ro" \
+            -v "$GITHUB_WORKSPACE/coverage-reports/head:/reports" \
+            j1939 bash /collect.sh 2>&1 | tee coverage-reports/head/run.log
+      - name: Measure PR base coverage
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base_dir="$RUNNER_TEMP/coverage-base"
+          mkdir -p "$base_dir" coverage-reports/base
+          git archive "$BASE_SHA" | tar -x -C "$base_dir"
+          docker run --rm \
+            -v "$base_dir:/input:ro" \
+            -v "$GITHUB_WORKSPACE/scripts/collect_coverage.sh:/collect.sh:ro" \
+            -v "$GITHUB_WORKSPACE/coverage-reports/base:/reports" \
+            j1939 bash /collect.sh 2>&1 | tee coverage-reports/base/run.log
+      - name: Reject coverage regressions
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          args=(--head coverage-reports/head/summary.json --markdown "$GITHUB_STEP_SUMMARY")
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            args+=(--base coverage-reports/base/summary.json)
+          fi
+          python3 scripts/check_coverage.py "${args[@]}"
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: coverage-reports/
+          if-no-files-found: warn
 
   vcan-tests:
     # ubuntu-latest became Ubuntu 26.04 on 2026-10-19; its azure kernel has no
