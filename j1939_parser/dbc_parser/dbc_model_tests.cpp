@@ -172,3 +172,133 @@ TEST_F(DbcModelTest, ExportIsIndependentOfGlobalCppNumericLocale) {
     ASSERT_TRUE(second.generateModelOutput(after, error));
     EXPECT_EQ(before.str(), after.str());
 }
+
+TEST_F(DbcModelTest, RejectsHeaderAndAttributeErrorsWithSpecificDiagnostics) {
+    const std::vector<std::pair<std::string, std::string>> cases{
+        {"NS_ :\n\nNS_ :\n", "duplicate NS_"},
+        {"VERSION \"one\"\nVERSION \"two\"\n", "duplicate VERSION"},
+        {"BS_:\nBS_:\n", "duplicate BS_"},
+        {"BU_:\nBU_: ECU\n", "duplicate BU_"},
+        {"BU_: ECU ECU\n", "invalid or duplicate node"},
+        {"BU_: 9ECU\n", "invalid or duplicate node"},
+        {bo + sg + "VAL_ 101 S 0 \"Off\" ;\n", "VAL_ must reference"},
+        {bo + sg + "BA_ \"SPN\" BO_ 101 1;\n", "SPN must reference"},
+        {bo + sg + "BA_ \"SPN\" BO_ 100 1;\nBA_ \"SPN\" BO_ 100 2;\n", "duplicate message SPN"},
+        {bo + sg + "BA_ \"SPN\" BO_ 100 S 1;\n", "malformed SPN"},
+        {bo + sg + "BA_ \"SPN\" SG_ 100 1;\n", "malformed SPN"},
+        {bo + sg + "BA_ \"J1939Default\" BO_ 101 0;\n", "J1939Default must reference"},
+        {bo + sg + "BA_ \"J1939Default\" BO_ 100 0;\nBA_ \"J1939Default\" BO_ 100 1;\n", "duplicate J1939Default"},
+        {bo + " SG_ S : 0|8@1+ (1,0) [0|255] \"\" ECU\n SG_ Other : 0|8@1+ (1,0) [0|255] \"\" ECU\n", "invalid signal"},
+        {bo, "message has no signals"},
+        {bo + sg + std::string(1, '\x01'), "only printable ASCII"},
+        {bo + sg + std::string(1, '\x80'), "only printable ASCII"},
+        {"BO_ 18446744073709551616 Huge: 8 ECU\n", "stoull"},
+    };
+    for (const auto &item : cases) {
+        SCOPED_TRACE(item.first);
+        DbcParser parser;
+        std::string diagnostic;
+        EXPECT_FALSE(parse(parser, item.first, &diagnostic));
+        EXPECT_NE(diagnostic.find(item.second), std::string::npos) << diagnostic;
+        std::ostringstream output;
+        output << "unchanged";
+        std::string error;
+        EXPECT_FALSE(parser.generateModelOutput(output, error));
+        EXPECT_EQ(output.str(), "unchanged");
+        // A rejected source poisons the session, even if a later source is valid.
+        EXPECT_FALSE(parser.parseFile(file(bo + sg)));
+    }
+}
+
+TEST_F(DbcModelTest, EnforcesSourceAndSessionBoundaries) {
+    const auto valid = file(bo + sg);
+    const auto missing = file("");
+    ASSERT_EQ(std::remove(missing.c_str()), 0);
+    for (const auto &path : {std::string("bad name.dbc"), missing}) {
+        DbcParser parser;
+        parser.setModelExportMode();
+        testing::internal::CaptureStderr();
+        EXPECT_FALSE(parser.parseFile(path));
+        EXPECT_FALSE(testing::internal::GetCapturedStderr().empty());
+    }
+    DbcParser duplicate;
+    duplicate.setModelExportMode();
+    ASSERT_TRUE(duplicate.parseFile(valid));
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(duplicate.parseFile(valid));
+    EXPECT_NE(testing::internal::GetCapturedStderr().find("duplicate source logical name"), std::string::npos);
+
+    DbcParser normalized;
+    normalized.setModelExportMode();
+    ASSERT_TRUE(normalized.parseFile(valid));
+    normalized.removeDuplicates();
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(normalized.parseFile(file("BO_ 101 Other: 8 ECU\n" + sg)));
+    EXPECT_NE(testing::internal::GetCapturedStderr().find("cannot parse after PGN normalization"), std::string::npos);
+
+    DbcParser late;
+    ASSERT_TRUE(late.parseFile(valid));
+    late.setModelExportMode();
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(late.parseFile(valid));
+    EXPECT_NE(testing::internal::GetCapturedStderr().find("enable model export before"), std::string::npos);
+}
+
+TEST_F(DbcModelTest, ExportsEmptyHeadersWhitespaceAndFalseDefaultWithoutInventingMessages) {
+    DbcParser empty;
+    ASSERT_TRUE(parse(empty, "VERSION \"\"\r\nNS_ :\r\n\r\nBS_:\r\nBU_:\r\n"));
+    std::ostringstream out;
+    out << "unchanged";
+    std::string error;
+    EXPECT_FALSE(empty.generateModelOutput(out, error));
+    EXPECT_NE(error.find("at least one message"), std::string::npos);
+    EXPECT_EQ(out.str(), "unchanged");
+    DbcParser parser;
+    ASSERT_TRUE(parse(parser, "NS_ :\n CM_\n" + bo +
+        "\tSG_ S : 0|8@1+ (1,0) [0|255] \"spaced unit\" ECU,Other\r\n"
+        "BA_ \"J1939Default\" BO_ 100 0;\n"));
+    std::ostringstream model;
+    ASSERT_TRUE(parser.generateModelOutput(model, error));
+    EXPECT_NE(model.str().find("j1939_default: false"), std::string::npos);
+    EXPECT_NE(model.str().find("receivers: \"Other\""), std::string::npos);
+    std::ostringstream failed;
+    failed.setstate(std::ios::badbit);
+    EXPECT_FALSE(parser.generateModelOutput(failed, error));
+    EXPECT_NE(error.find("output stream failed"), std::string::npos);
+}
+
+TEST_F(DbcModelTest, OrdersMuxAlternativesAndEscapesAllowedUnitTabs) {
+    const std::string header = "BO_ 100 Mux: 8 ECU\n SG_ Switch M : 0|16@1+ (1,0) [0|65535] \"\" ECU\n";
+    const std::string a = " SG_ A m1 : 16|8@1+ (1,0) [0|255] \"unit\ttext\" ECU\n";
+    const std::string b = " SG_ B m65535 : 16|8@1+ (1,0) [0|255] \"\" ECU\n";
+    for (const auto &body : {a + b, b + a}) {
+        DbcParser parser;
+        ASSERT_TRUE(parse(parser, header + body + "BA_ \"J1939Default\" BO_ 100 1;\n"));
+        std::ostringstream model;
+        std::string error;
+        ASSERT_TRUE(parser.generateModelOutput(model, error));
+        EXPECT_LT(model.str().find("name: \"A\""), model.str().find("name: \"B\""));
+        EXPECT_NE(model.str().find("unit: \"unit\\011text\""), std::string::npos);
+        EXPECT_NE(model.str().find("value: 65535"), std::string::npos);
+        EXPECT_NE(model.str().find("j1939_default: true"), std::string::npos);
+    }
+}
+
+TEST_F(DbcModelTest, AcceptsRelativeSourceNamesAndRejectsAnUnparsedSession) {
+    DbcParser empty;
+    empty.setModelExportMode();
+    std::ostringstream out;
+    std::string error;
+    EXPECT_FALSE(empty.generateModelOutput(out,error));
+    const auto path=file(bo+sg);
+    char original[4096];
+    ASSERT_NE(getcwd(original,sizeof(original)),nullptr);
+    struct RestoreDirectory {
+        const char *original;
+        ~RestoreDirectory() { EXPECT_EQ(chdir(original),0); }
+    } restore{original};
+    ASSERT_EQ(chdir("/tmp"),0);
+    DbcParser parser;parser.setModelExportMode();
+    ASSERT_TRUE(parser.parseFile(path.substr(path.find_last_of('/')+1)));
+    EXPECT_TRUE(parser.generateModelOutput(out,error))<<error;
+}

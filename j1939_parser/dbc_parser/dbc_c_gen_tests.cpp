@@ -1034,3 +1034,82 @@ TEST_F(DbcCGenTest, MalformedDecimalsNeverFallBackToParsedPrefixes) {
         EXPECT_EQ(c.str(),"sentinel");EXPECT_EQ(h.str(),"sentinel");
     }
 }
+
+TEST_F(DbcCGenTest, AccessorsRejectMalformedScaleAndOffsetWithoutPartialOutput) {
+    for (const auto &numbers : {std::string("1.0f,0"), std::string("1,0.0f")}) {
+        DbcParser parser;
+        ASSERT_TRUE(parser.parseFile(writeTemp("BO_ 100 S: 8 ECU\n SG_ V : 0|8@1+ (" + numbers + ") [0|255] \"\" ECU\n")));
+        std::ostringstream out;
+        out << "sentinel";
+        std::string error;
+        EXPECT_FALSE(parser.generateAccessorOutput(out,error));
+        EXPECT_NE(error.find("invalid accessor decimal"),std::string::npos);
+        EXPECT_EQ(out.str(),"sentinel");
+    }
+}
+
+TEST_F(DbcCGenTest, LegacyMuxOrderingRetainsEverySignalDeterministically) {
+    // Legacy PGN output retains these overlapping declarations; strict model
+    // export rejects simultaneous overlaps rather than approving a mapping.
+    const std::vector<std::string> signals{
+        " SG_ Z M : 0|8@1+ (1,0) [0|255] \"\" ECU\n",
+        " SG_ B m0 : 0|8@1+ (1,0) [0|255] \"\" ECU\n",
+        " SG_ A m0 : 0|8@1+ (1,0) [0|255] \"\" ECU\n",
+        " SG_ C m2 : 0|8@1+ (1,0) [0|255] \"\" ECU\n",
+        " SG_ D m1 : 0|8@1+ (1,0) [0|255] \"\" ECU\n"};
+    for (bool reverse : {false,true}) {
+        std::string dbc="BO_ 100 Mux: 8 ECU\n";
+        for (size_t i=0;i<signals.size();++i) dbc+=signals[reverse ? signals.size()-i-1 : i];
+        DbcParser parser;
+        ASSERT_TRUE(parser.parseFile(writeTemp(dbc)));
+        parser.generateRunTimeFormat();
+        const auto &spns=parser.dbc().at(100).signals_;
+        ASSERT_EQ(spns.size(),5u);
+        EXPECT_EQ(spns[0].name_,"A"); EXPECT_EQ(spns[1].name_,"B");
+        EXPECT_EQ(spns[2].name_,"Z"); EXPECT_EQ(spns[3].name_,"D"); EXPECT_EQ(spns[4].name_,"C");
+        auto output=generate(dbc);
+        ASSERT_TRUE(output.ok)<<output.error;
+        EXPECT_LT(output.c.find("/* A */"),output.c.find("/* B */"));
+        EXPECT_LT(output.c.find("/* B */"),output.c.find("/* Z */"));
+    }
+}
+
+TEST_F(DbcCGenTest, PortableOutputRejectsEnumTableOverflowBeforeWriting) {
+    std::ostringstream source;
+    for(unsigned i=0;i<65536;++i) source<<"VAL_ 100 S "<<i<<" \"E\" ;\n";
+    // One signal reaches the final table check. A later signal exercises the
+    // early bound check before narrowing its enum_begin index.
+    for(bool later_signal : {false,true}) {
+        DbcParser parser;
+        std::string text="BO_ 100 Enums: 8 ECU\n SG_ S : 0|32@1+ (1,0) [0|65535] \"\" ECU\n";
+        if(later_signal) text+=" SG_ T : 32|8@1+ (1,0) [0|255] \"\" ECU\n";
+        text+="\n"+source.str();
+        ASSERT_TRUE(parser.parseFile(writeTemp(text)));
+        for(bool no_strings : {false,true}) {
+            std::ostringstream c,h;c<<"C sentinel";h<<"H sentinel";std::string error;
+            EXPECT_FALSE(parser.generateCOutput(c,h,no_strings,error));
+            EXPECT_NE(error.find("uint16 index"),std::string::npos)<<error;
+            EXPECT_EQ(c.str(),"C sentinel");EXPECT_EQ(h.str(),"H sentinel");
+        }
+    }
+}
+
+TEST_F(DbcCGenTest, SourceSuffixRequiresTwoHexDigits) {
+    for(const auto &name : {std::string("Status_AG"),std::string("Status_GA")}) {
+        auto output=generate("BO_ 2565865233 "+name+": 8 ECU\n SG_ S : 0|8@1+ (1,0) [0|255] \"\" ECU\n");
+        ASSERT_TRUE(output.ok)<<output.error;
+        EXPECT_NE(output.c.find(name),std::string::npos);
+    }
+}
+
+TEST_F(DbcCGenTest, Uint64EnumPatternsCompileWithAndWithoutStrings) {
+    const std::string dbc="BO_ 100 Wide: 8 ECU\n SG_ S : 0|64@1+ (1,0) [0|18446744073709551615] \"\" ECU\n\nVAL_ 100 S 18446744073709551615 \"Maximum\" ;\n";
+    for(bool no_strings : {false,true}) {
+        auto output=generate(dbc,no_strings);
+        ASSERT_TRUE(output.ok)<<output.error;
+        const auto path=writeTemp(output.c+"\n#include <assert.h>\nint main(void) { assert(sample_db.enum_count==1); assert(sample_db.enums[0].value==UINT64_MAX); return 0; }\n");
+        const auto binary=path+".bin";temp_paths_.push_back(binary);
+        ASSERT_EQ(system(("cc -x c -std=c11 -Wall -Wextra -Werror -pedantic -I '"+std::string(J1939_INCLUDE_DIR)+"' '"+path+"' -o '"+binary+"'").c_str()),0);
+        EXPECT_EQ(system(("'"+binary+"'").c_str()),0);
+    }
+}

@@ -77,7 +77,8 @@ bool DbcParser::parseModelFile(const std::string &path) {
     size_t line_number = 0;
     const auto slash = path.find_last_of("/\\");
     const std::string name = path.substr(slash == std::string::npos ? 0 : slash + 1);
-    const auto fail = [&](const std::string &why) {
+    // Preserve literals without allocating a temporary string on error paths.
+    const auto fail = [&](const auto &why) {
         model_failed_ = true;
         std::cerr << path << ':' << line_number << ": model-v1: " << why << '\n';
         return false;
@@ -245,7 +246,7 @@ bool DbcParser::validateModel(std::string &error) const {
     for (const auto &entry : raw_messages_) {
         const Message &message = entry.second;
         const auto &location = model_messages_.at(entry.first);
-        const auto bad = [&](const std::string &why, const Signal *signal = nullptr) {
+        const auto bad = [&](const char *why, const Signal *signal = nullptr) {
             const auto &where = signal ? model_signals_.at({entry.first, signal->name()}) : location;
             error = where.source + ':' + std::to_string(where.line) + ": message " + message.name() +
                 (signal ? " signal " + signal->name() : "") + ": " + why;

@@ -1009,3 +1009,21 @@ TEST(SignalDeathTest, ToPackedIntAssertsWhenStartBitPrecedesPreviousField) {
     uint16_t start_bit = 20; // pretend the previous field already consumed through bit 20
     EXPECT_DEATH(signal.toPackedInt(&start_bit), "");
 }
+
+TEST(SignalTest, LegacyUnitAndMuxFallbacksRemainInspectable) {
+    for(const auto &unit : {std::string("unquoted"),std::string("\"unfinished")}) {
+        Signal signal(" SG_ S : 0|8@0- (1,2) [-128|127] "+unit+" ECU\n");
+        ASSERT_TRUE(signal.valid());
+        EXPECT_EQ(signal.unitsLiteral(),unit);
+        EXPECT_NE(signal.toSpnString().find("true, false"),std::string::npos);
+        EXPECT_NE(signal.toGetSetMethod().find("double"),std::string::npos);
+        Signal packed(" SG_ T : 0|8@1- (1,0) [-128|127] \"\" ECU\n");
+        uint16_t end=0;
+        EXPECT_NE(packed.toPackedInt(&end).find("int64_t"),std::string::npos);
+    }
+    for(const auto &marker : {std::string("X"),std::string("m1MX")}) {
+        Signal signal(" SG_ S "+marker+" : 0|8@1+ (1,0) [0|255] \"\" ECU\n");
+        EXPECT_TRUE(signal.valid());EXPECT_FALSE(signal.portableMuxValid());
+    }
+    EXPECT_THROW(Signal(" SG_ S : 0|8@1+ (wat,0) [0|255] \"\" ECU\n",true),std::invalid_argument);
+}
