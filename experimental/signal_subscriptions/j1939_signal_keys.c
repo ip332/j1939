@@ -153,7 +153,8 @@ int j1939_keys_subscribe(j1939_key_context_t *c,const j1939_key_identity_t *expe
 int j1939_keys_subscribe_key(j1939_key_context_t *c,const j1939_key_identity_t *expected,uint32_t key,uint32_t tag,uint32_t *token) {
     j1939_sub_ref_t ref;j1939_key_filter_t f={0};uint32_t id;int result;
     result=j1939_keys_decode(c,expected,key,&ref);if(result)return result;
-    (void)j1939_key_unpack(c->identity.layout,key,&f.domain,&f.source,&id);
+    result=j1939_key_unpack(c->identity.layout,key,&f.domain,&f.source,&id);
+    if(result)return result;
     return j1939_keys_subscribe(c,expected,id,f,tag,token);
 }
 int j1939_keys_unsubscribe(j1939_key_context_t *c,uint32_t token) {
@@ -183,7 +184,7 @@ int j1939_keys_decode(const j1939_key_context_t *c,const j1939_key_identity_t *e
     if(!c || !c->catalog || !out)return J1939_SUB_INVALID;
     if(c->busy)return J1939_SUB_BUSY;
     if(!j1939_key_identity_equal(expected,&c->identity))return J1939_KEY_MISMATCH;
-    (void)j1939_key_unpack(c->identity.layout,key,&d,&s,&id);
+    if(j1939_key_unpack(c->identity.layout,key,&d,&s,&id))return J1939_SUB_INVALID;
     if(id>=c->catalog->count)return J1939_SUB_NOT_FOUND;
     f.domain=d;f.source=s;
     if(c->identity.source_mode==J1939_KEY_SOURCE_ADDRESS && s>255)return J1939_SUB_INVALID;

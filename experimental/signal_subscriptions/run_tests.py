@@ -53,7 +53,7 @@ def main():
              '-fsanitize=address,undefined', '-I'+str(ROOT/'j1939_parser'),
              '-I'+str(HERE), '-I'+str(build)]
     for source in ['tests', 'key_tests', 'queue_tests', 'dashboard']:
-        run(cc+flags+[HERE/(source+'.c'), HERE/'j1939_subscriptions.c',
+        run(cc+flags+(['-O2'] if source=='key_tests' else [])+[HERE/(source+'.c'), HERE/'j1939_subscriptions.c',
                       ROOT/'j1939_parser/j1939_db.c', build/'subscriptions.c', HERE/'j1939_signal_keys.c',HERE/'j1939_key_queue.c',HERE/'j1939_latest.c',build/'signal_keys.c', '-o', build/source])
         result=run([build/source], capture=source=='dashboard')
         if source=='dashboard':

@@ -126,6 +126,15 @@ static void rejects_and_spns(void) {
     assert(j1939_keys_init(&c,&generated_keys_catalog,expected_catalog,layout,J1939_KEY_SOURCE_ADDRESS,0,NULL,0,base,slots,1,receive,&sink)==0);
     {uint8_t wrong_header[32];unsigned i;for(i=0;i<32;++i)wrong_header[i]=expected_catalog[i];wrong_header[0]^=1;
      assert(j1939_keys_init(&c,&generated_keys_catalog,wrong_header,layout,J1939_KEY_SOURCE_ADDRESS,0,NULL,0,base,slots,1,receive,&sink)==J1939_KEY_MISMATCH);}
+    /* Defensive rejection must preserve outputs even if a copied context has
+     * an invalid layout. Never consume uninitialized unpack outputs. */
+    {j1939_key_context_t invalid=c; j1939_sub_ref_t untouched={0};
+     uint32_t unchanged=999;
+     invalid.identity.layout=(j1939_key_layout_t){0,8,24};
+     assert(j1939_keys_decode(&invalid,&invalid.identity,0,&untouched)==J1939_SUB_INVALID);
+     assert(untouched.metadata==NULL && untouched.message_definition==0 && untouched.signal_definition==0);
+     assert(j1939_keys_subscribe_key(&invalid,&invalid.identity,0,0,&unchanged)==J1939_SUB_INVALID && unchanged==999);
+     assert(base[0].id==0);}
     wrong=c.identity;wrong.catalog_sha256[0]^=1;
     assert(j1939_keys_subscribe(&c,&wrong,A,f,0,&token)==J1939_KEY_MISMATCH && token==999);
     assert(j1939_keys_decode(&c,&wrong,UINT32_MAX,&ref)==J1939_KEY_MISMATCH);
