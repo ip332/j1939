@@ -1,0 +1,12 @@
+{
+  "description": "Redistributable synthetic classic J1939 frames; clock 7 is a simulated nanosecond clock, not UTC.",
+  "clock_id": 7,
+  "domain": 1,
+  "frames": [
+    {"can_id": "18ff010b", "data": "401ffe017dff0000", "timestamp_ns": "1000000000"},
+    {"can_id": "18ff013e", "data": "401ffe017dff0000", "timestamp_ns": "1100000000"},
+    {"can_id": "18ff020b", "data": "0032000000000000", "timestamp_ns": "1200000000"},
+    {"can_id": "18ff030b", "data": "ffffffffffffffff", "timestamp_ns": "1300000000"},
+    {"can_id": "18ff010b", "data": "401ffe0063ff0000", "timestamp_ns": "1400000000"}
+  ]
+}
